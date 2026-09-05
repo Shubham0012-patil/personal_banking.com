@@ -131,33 +131,10 @@ export interface GlobalUtrRecord {
 export interface UserProfile {
   id?: string;
   name: string;
-  email?: string;
-  phone?: string;
-  accountIdentifier?: string; // email or phone
-  accountType?: 'Email' | 'Mobile';
-  // Login PIN (strictly separate from Transaction PIN)
-  loginPinHash?: string;
-  loginPinLength?: 4 | 6;
-  isLoginPinSet?: boolean;
-  // Application Transaction PIN (strictly separate from Login PIN)
-  pinHash: string;
+  email: string;
+  pinHash: string; // SHA-256 or masked PIN
   pinLength: 4 | 6;
   isPinSet: boolean;
-  createdAt?: string;
-  lastLoginAt?: string;
-}
-
-export interface RegisteredAccount {
-  id: string;
-  name: string;
-  identifier: string; // email or phone
-  accountType: 'Email' | 'Mobile';
-  createdAt: string;
-  lastLoginAt?: string;
-  hasLoginPin: boolean;
-  hasTxnPin: boolean;
-  passwordHash?: string;
 }
 
 export type ActiveTab = 'dashboard' | 'khata' | 'expenses' | 'loans' | 'reports' | 'settings';
-

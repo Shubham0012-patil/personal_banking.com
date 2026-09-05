@@ -81,10 +81,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
             <div>
-              <h2 className="text-sm font-black tracking-tight text-slate-100 uppercase leading-snug">
-                NEXMONEY
+              <h2 className="text-xs font-black tracking-tight text-slate-100 uppercase leading-snug">
+                Shubham Banking
               </h2>
-              <p className="text-[10px] font-medium text-emerald-400 tracking-tight">
+              <p className="text-[10px] font-black text-amber-400 tracking-wider">
+                NEXMONEY
+              </p>
+              <p className="text-[9px] font-medium text-slate-400 -mt-0.5">
                 Personal Finance Management
               </p>
             </div>

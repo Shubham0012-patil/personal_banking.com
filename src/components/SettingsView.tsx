@@ -78,7 +78,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `nexmoney_backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `shubham_banking_nexmoney_backup_${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -244,54 +244,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
           <p>
             <strong>UTR Uniqueness:</strong> Enforced per-user account via <code className="text-indigo-400 font-mono">UNIQUE(user_id, utr_number)</code>.
           </p>
-        </div>
-
-        {/* Registered Accounts on this device */}
-        <div className="pt-2">
-          <span className="text-[11px] font-semibold text-slate-400 block mb-2">
-            Registered Accounts on This Device ({storage.getRegisteredAccounts().length})
-          </span>
-          <div className="space-y-2">
-            {storage.getRegisteredAccounts().map(acc => {
-              const isCurrent = acc.id === profile.id || acc.identifier.toLowerCase() === (profile.email || '').toLowerCase();
-              return (
-                <div
-                  key={acc.id}
-                  className={`p-3 rounded-2xl border text-xs flex items-center justify-between ${
-                    isCurrent
-                      ? 'bg-emerald-500/10 border-emerald-500/30 text-slate-200'
-                      : 'bg-slate-950/60 border-slate-800/80 text-slate-400'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-slate-800 text-slate-200 font-bold text-xs flex items-center justify-center">
-                      {acc.name.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-100">{acc.name}</span>
-                        {isCurrent && (
-                          <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-semibold">
-                            Active Vault
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[10px] text-slate-400 block">{acc.identifier}</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 text-[10px]">
-                    <span className={`px-2 py-0.5 rounded ${acc.hasLoginPin ? 'bg-teal-500/20 text-teal-300' : 'bg-slate-800 text-slate-500'}`}>
-                      {acc.hasLoginPin ? 'Login PIN: Set' : 'Login PIN: Not Set'}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded ${acc.hasTxnPin ? 'bg-blue-500/20 text-blue-300' : 'bg-slate-800 text-slate-500'}`}>
-                      {acc.hasTxnPin ? 'Txn PIN: Set' : 'Txn PIN: Not Set'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
         </div>
       </div>
 

@@ -70,7 +70,7 @@ export function generateKhataPdf(options: {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text('NEXMONEY', 14, 13);
+  doc.text('SHUBHAM BANKING NEXMONEY', 14, 13);
 
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
@@ -152,7 +152,7 @@ export function generateKhataPdf(options: {
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Confidential Financial Statement — ${userName} | NEXMONEY | Page ${i} of ${pageCount}`,
+      `Confidential Financial Statement — ${userName} | SHUBHAM BANKING NEXMONEY | Page ${i} of ${pageCount}`,
       14,
       288
     );
@@ -204,7 +204,7 @@ export function generateExpensesPdf(options: {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text('NEXMONEY', 14, 13);
+  doc.text('SHUBHAM BANKING NEXMONEY', 14, 13);
 
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
@@ -275,7 +275,7 @@ export function generateExpensesPdf(options: {
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Confidential Financial Statement — ${userName} | NEXMONEY | Page ${i} of ${pageCount}`,
+      `Confidential Financial Statement — ${userName} | SHUBHAM BANKING NEXMONEY | Page ${i} of ${pageCount}`,
       14,
       288
     );
@@ -324,7 +324,7 @@ export function generateLoansPdf(options: {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text('NEXMONEY', 14, 13);
+  doc.text('SHUBHAM BANKING NEXMONEY', 14, 13);
 
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
@@ -404,7 +404,7 @@ export function generateLoansPdf(options: {
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Confidential Financial Statement — ${userName} | NEXMONEY | Page ${i} of ${pageCount}`,
+      `Confidential Financial Statement — ${userName} | SHUBHAM BANKING NEXMONEY | Page ${i} of ${pageCount}`,
       14,
       288
     );
