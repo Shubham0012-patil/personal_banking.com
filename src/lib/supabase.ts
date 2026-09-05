@@ -118,27 +118,150 @@ export async function verifyAppPinRpc(pin: string): Promise<boolean | null> {
   }
 }
 
+/**
+ * Call the secure Supabase RPC has_login_pin()
+ * Returns null if RPC is not available in database
+ */
+export async function hasLoginPinRpc(): Promise<boolean | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.rpc('has_login_pin');
+    if (error) {
+      return null;
+    }
+    return typeof data === 'boolean' ? data : Boolean(data);
+  } catch (err) {
+    console.warn('has_login_pin RPC error:', err);
+    return null;
+  }
+}
+
+/**
+ * Call the secure Supabase RPC set_login_pin(p_pin text)
+ */
+export async function setLoginPinRpc(pin: string): Promise<{ success: boolean; error?: string } | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  try {
+    const { error } = await supabase.rpc('set_login_pin', { p_pin: pin });
+    if (error) {
+      if (error.code === 'PGRST202') return null;
+      return { success: false, error: error.message };
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.warn('set_login_pin RPC error:', err);
+    return null;
+  }
+}
+
+/**
+ * Call the secure Supabase RPC verify_login_pin(p_pin text)
+ */
+export async function verifyLoginPinRpc(pin: string): Promise<boolean | null> {
+  const supabase = getSupabase();
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.rpc('verify_login_pin', { p_pin: pin });
+    if (error) {
+      if (error.code === 'PGRST202') return null;
+      return false;
+    }
+    return Boolean(data);
+  } catch (err) {
+    console.warn('verify_login_pin RPC error:', err);
+    return null;
+  }
+}
+
 export const SUPABASE_SQL_SCHEMA = `-- =========================================================================
--- SHUBHAM BANKING NEXMONEY — SUPABASE POSTGRESQL PRODUCTION SCHEMA
--- Multi-User Family System with strict per-user Row Level Security (RLS)
+-- NEXMONEY — SUPABASE POSTGRESQL PRODUCTION SCHEMA
+-- Multi-User Personal Finance System with strict per-user Row Level Security (RLS)
 -- =========================================================================
 
 -- Enable UUID & pgcrypto extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 1. APPLICATION TRANSACTION PIN & SECURITY (SEPARATE FROM LOGIN PASSWORD)
+-- 1. SECURITY PINS: LOGIN PIN & TRANSACTION PIN (COMPLETELY SEPARATE)
 CREATE TABLE IF NOT EXISTS app_pins (
     user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    pin_hash TEXT NOT NULL,
+    login_pin_hash TEXT,
+    login_pin_length INT DEFAULT 4,
+    pin_hash TEXT, -- transaction pin hash
     pin_length INT DEFAULT 4,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 ALTER TABLE app_pins ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Users manage own transaction PIN" ON app_pins;
-CREATE POLICY "Users manage own transaction PIN" ON app_pins FOR ALL USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users manage own security PINs" ON app_pins;
+CREATE POLICY "Users manage own security PINs" ON app_pins FOR ALL USING (auth.uid() = user_id);
+
+-- Check if user has configured Login PIN
+CREATE OR REPLACE FUNCTION has_login_pin()
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_has boolean;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM app_pins WHERE user_id = auth.uid() AND login_pin_hash IS NOT NULL
+    ) INTO v_has;
+    RETURN v_has;
+END;
+$$;
+
+-- Set or update Login PIN
+CREATE OR REPLACE FUNCTION set_login_pin(p_pin text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    IF length(p_pin) NOT IN (4, 6) THEN
+        RAISE EXCEPTION 'Login PIN must be 4 or 6 numeric digits';
+    END IF;
+
+    INSERT INTO app_pins (user_id, login_pin_hash, login_pin_length, updated_at)
+    VALUES (
+        auth.uid(),
+        crypt(p_pin, gen_salt('bf', 10)),
+        length(p_pin),
+        now()
+    )
+    ON CONFLICT (user_id) DO UPDATE
+    SET login_pin_hash = crypt(p_pin, gen_salt('bf', 10)),
+        login_pin_length = length(p_pin),
+        updated_at = now();
+
+    RETURN true;
+END;
+$$;
+
+-- Verify Login PIN
+CREATE OR REPLACE FUNCTION verify_login_pin(p_pin text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_stored_hash text;
+BEGIN
+    SELECT login_pin_hash INTO v_stored_hash
+    FROM app_pins
+    WHERE user_id = auth.uid();
+
+    IF v_stored_hash IS NULL THEN
+        RETURN false;
+    END IF;
+
+    RETURN v_stored_hash = crypt(p_pin, v_stored_hash);
+END;
+$$;
 
 -- RPC 1: Check if user has configured an application transaction PIN
 CREATE OR REPLACE FUNCTION has_app_pin()

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { KeyRound, X, Check, AlertCircle, ShieldCheck } from 'lucide-react';
+import { KeyRound, X, Check, AlertCircle, ShieldCheck, Key } from 'lucide-react';
 import { storage } from '../lib/storage';
 
 interface PinSetupModalProps {
@@ -15,6 +15,7 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
   onSuccess,
   isFirstTime = false
 }) => {
+  const [pinTarget, setPinTarget] = useState<'transaction' | 'login'>('transaction');
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -23,8 +24,9 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
   const [success, setSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const hasExistingPin = storage.hasPin();
-  const requireCurrentPin = !isFirstTime && hasExistingPin;
+  const hasExistingTxnPin = storage.hasPin();
+  const hasExistingLoginPin = storage.hasLoginPin();
+  const requireCurrentPin = !isFirstTime && (pinTarget === 'transaction' ? hasExistingTxnPin : hasExistingLoginPin);
 
   useEffect(() => {
     if (isOpen) {
@@ -35,7 +37,7 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
       setSuccess(false);
       setIsSubmitting(false);
     }
-  }, [isOpen]);
+  }, [isOpen, pinTarget]);
 
   if (!isOpen) return null;
 
@@ -43,20 +45,22 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
     e.preventDefault();
     setError('');
 
-    // 1. If modifying an existing PIN, verify current PIN
+    // 1. Verify current PIN if modifying
     if (requireCurrentPin) {
       if (!currentPin) {
-        setError('Please enter your current Application PIN.');
+        setError(`Please enter your current ${pinTarget === 'transaction' ? 'Transaction' : 'Login'} PIN.`);
         return;
       }
-      const isValidCurrent = await storage.verifyAppPin(currentPin);
+      const isValidCurrent = pinTarget === 'transaction'
+        ? await storage.verifyAppPin(currentPin)
+        : await storage.verifyAppLoginPin(currentPin);
       if (!isValidCurrent) {
-        setError('Current Application PIN is incorrect.');
+        setError(`Current ${pinTarget === 'transaction' ? 'Transaction' : 'Login'} PIN is incorrect.`);
         return;
       }
     }
 
-    // 2. Validate new PIN
+    // 2. Validate new PIN length and confirmation
     if (newPin.length !== pinLength) {
       setError(`New PIN must be exactly ${pinLength} digits.`);
       return;
@@ -69,10 +73,16 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      // Save using Supabase set_app_pin RPC and local hash sync
-      const res = await storage.setAppPin(newPin);
-      if (!res.success) {
-        throw new Error(res.error || 'Failed to save application PIN');
+      if (pinTarget === 'transaction') {
+        const res = await storage.setAppPin(newPin);
+        if (!res.success) {
+          throw new Error(res.error || 'Failed to save transaction PIN');
+        }
+      } else {
+        const res = await storage.setAppLoginPin(newPin);
+        if (!res.success) {
+          throw new Error(res.error || 'Failed to save login PIN');
+        }
       }
 
       setSuccess(true);
@@ -107,32 +117,58 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
           </button>
         )}
 
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-3 mb-5">
           <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
             <KeyRound className="w-5 h-5" />
           </div>
           <div>
             <h3 className="text-base font-bold text-slate-100">
-              {isFirstTime || !hasExistingPin
-                ? 'Create Application Transaction PIN'
-                : 'Change Application PIN'}
+              Configure Security PIN
             </h3>
             <p className="text-xs text-slate-400">
-              {isFirstTime || !hasExistingPin
-                ? 'Set up a 4 or 6-digit numeric PIN to authorize financial transactions'
-                : 'Update your transaction confirmation PIN'}
+              Manage your Transaction Authorization and Login PINs
             </p>
           </div>
         </div>
+
+        {/* Target Selector: Transaction PIN vs Login PIN */}
+        {!isFirstTime && (
+          <div className="grid grid-cols-2 gap-2 mb-4 bg-slate-950 p-1 rounded-xl border border-slate-800">
+            <button
+              type="button"
+              onClick={() => setPinTarget('transaction')}
+              className={`py-1.5 px-2 text-xs font-semibold rounded-lg transition-all ${
+                pinTarget === 'transaction'
+                  ? 'bg-slate-800 text-emerald-300 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Transaction PIN
+            </button>
+            <button
+              type="button"
+              onClick={() => setPinTarget('login')}
+              className={`py-1.5 px-2 text-xs font-semibold rounded-lg transition-all ${
+                pinTarget === 'login'
+                  ? 'bg-slate-800 text-teal-300 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Login PIN
+            </button>
+          </div>
+        )}
 
         {success ? (
           <div className="py-8 text-center flex flex-col items-center">
             <div className="w-12 h-12 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center mb-3">
               <Check className="w-6 h-6" />
             </div>
-            <h4 className="text-base font-bold text-slate-100">Transaction PIN Configured</h4>
+            <h4 className="text-base font-bold text-slate-100">
+              {pinTarget === 'transaction' ? 'Transaction PIN Configured' : 'Login PIN Configured'}
+            </h4>
             <p className="text-xs text-slate-400 mt-1">
-              Your PIN is securely hashed and ready to authorize actions.
+              Your PIN is securely salted and hashed.
             </p>
           </div>
         ) : (
@@ -162,7 +198,7 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
                       : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:bg-slate-800'
                   }`}
                 >
-                  4-Digit Numeric PIN
+                  4-Digit PIN
                 </button>
                 <button
                   type="button"
@@ -177,7 +213,7 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
                       : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:bg-slate-800'
                   }`}
                 >
-                  6-Digit Numeric PIN
+                  6-Digit PIN
                 </button>
               </div>
             </div>
@@ -185,7 +221,7 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
             {requireCurrentPin && (
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Current Application PIN
+                  Current {pinTarget === 'transaction' ? 'Transaction' : 'Login'} PIN
                 </label>
                 <input
                   type="password"
@@ -236,7 +272,9 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
             <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-2xl flex items-start gap-2 text-[11px] text-slate-400">
               <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <span>
-                This PIN is hashed on save and strictly required for adding, editing, or deleting transactions and loans.
+                {pinTarget === 'transaction'
+                  ? 'Transaction PIN is required to authorize additions, edits, and deletions in Khata, Expenses, and Loans. Cannot be identical to Login PIN.'
+                  : 'Login PIN allows fast sign-in on this device without entering your full password. Cannot be identical to Transaction PIN.'}
               </span>
             </div>
 
@@ -255,7 +293,7 @@ export const PinSetupModal: React.FC<PinSetupModalProps> = ({
                 disabled={isSubmitting}
                 className="w-full sm:w-auto px-6 py-2.5 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-xl shadow-lg shadow-emerald-500/20 transition-colors disabled:opacity-50"
               >
-                {isSubmitting ? 'Saving PIN...' : 'Save Application PIN'}
+                {isSubmitting ? 'Saving PIN...' : `Save ${pinTarget === 'transaction' ? 'Transaction' : 'Login'} PIN`}
               </button>
             </div>
           </form>

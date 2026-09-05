@@ -41,7 +41,7 @@ export default function App() {
         if (data?.session) {
           const user = data.session.user;
           const uid = user.id;
-          const name = user.user_metadata?.full_name || (user.email?.toLowerCase().includes('shubham') ? 'Shubham Godage' : user.email?.split('@')[0]);
+          const name = user.user_metadata?.full_name || (user.email ? user.email.split('@')[0] : 'Account User');
           storage.setCurrentUser(uid, user.email || '', name);
           setIsAuthenticated(true);
           setShowAuthModal(false);
@@ -53,7 +53,7 @@ export default function App() {
         if (session) {
           const user = session.user;
           const uid = user.id;
-          const name = user.user_metadata?.full_name || (user.email?.toLowerCase().includes('shubham') ? 'Shubham Godage' : user.email?.split('@')[0]);
+          const name = user.user_metadata?.full_name || (user.email ? user.email.split('@')[0] : 'Account User');
           storage.setCurrentUser(uid, user.email || '', name);
           setIsAuthenticated(true);
           setShowAuthModal(false);

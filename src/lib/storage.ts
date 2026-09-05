@@ -6,10 +6,19 @@ import {
   LoanRepayment,
   GlobalUtrRecord,
   UserProfile,
+  RegisteredAccount,
   ExpenseCategory,
   KhataTransactionType
 } from '../types';
-import { getSupabase, hasAppPinRpc, setAppPinRpc, verifyAppPinRpc } from './supabase';
+import {
+  getSupabase,
+  hasAppPinRpc,
+  setAppPinRpc,
+  verifyAppPinRpc,
+  hasLoginPinRpc,
+  setLoginPinRpc,
+  verifyLoginPinRpc
+} from './supabase';
 
 const LEGACY_STORAGE_KEYS = {
   USER_PROFILE: 'smm_user_profile',
@@ -20,23 +29,50 @@ const LEGACY_STORAGE_KEYS = {
   GLOBAL_UTR: 'smm_global_utr'
 };
 
-// Simple async SHA-256 for PIN hashing
-export async function hashPin(pin: string): Promise<string> {
+// Cryptographically separate SHA-256 salts for Login PIN and Transaction PIN
+export async function hashTransactionPin(pin: string, userId: string = 'user'): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(`smm_salt_${pin}_shubham_fintech_2026`);
+  const data = encoder.encode(`nexmoney_txn_salt_${userId}_${pin}_vault_2026`);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Initial profile - NO default PIN is configured
+export async function hashLoginPin(pin: string, userId: string = 'user'): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`nexmoney_login_salt_${userId}_${pin}_vault_2026`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function hashPassword(password: string, userId: string = 'user'): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(`nexmoney_pwd_salt_${userId}_${password}_vault_2026`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Backward compatibility alias
+export async function hashPin(pin: string): Promise<string> {
+  return hashTransactionPin(pin);
+}
+
+// Initial default profile - NO default PIN is configured
 const DEFAULT_PROFILE: UserProfile = {
-  id: 'shubham_godage_primary',
-  name: 'Shubham Godage',
-  email: 'forexwithshubham0012@gmail.com',
+  id: 'primary_vault_user',
+  name: 'Primary Vault',
+  email: 'user@nexmoney.internal',
+  accountIdentifier: 'user@nexmoney.internal',
+  accountType: 'Email',
+  loginPinHash: '',
+  loginPinLength: 4,
+  isLoginPinSet: false,
   pinHash: '',
   pinLength: 4,
-  isPinSet: false
+  isPinSet: false,
+  createdAt: '2026-08-01T10:00:00.000Z'
 };
 
 const DEFAULT_KHATA_PEOPLE: KhataPerson[] = [
@@ -240,9 +276,9 @@ const DEFAULT_LONG_TERM_LOANS: LongTermLoan[] = [
 class StorageService {
   private listeners: Set<() => void> = new Set();
   private initialized = false;
-  private currentUserId: string = 'shubham_godage_primary';
-  private currentUserEmail: string = 'forexwithshubham0012@gmail.com';
-  private currentUserName: string = 'Shubham Godage';
+  private currentUserId: string = 'primary_vault_user';
+  private currentUserEmail: string = 'user@nexmoney.internal';
+  private currentUserName: string = 'Primary Account';
 
   constructor() {
     this.restoreUserSession();
@@ -269,7 +305,7 @@ class StorageService {
   }
 
   public setCurrentUser(
-    userOrId: { id: string; email: string; name?: string } | string,
+    userOrId: { id: string; email?: string; name?: string; phone?: string; accountType?: 'Email' | 'Mobile' } | string,
     email?: string,
     name?: string
   ) {
@@ -283,7 +319,7 @@ class StorageService {
       userName = name || (userEmail ? userEmail.split('@')[0] : 'User');
     } else {
       id = userOrId.id;
-      userEmail = userOrId.email;
+      userEmail = userOrId.email || '';
       userName = userOrId.name || (userOrId.email ? userOrId.email.split('@')[0] : 'User');
     }
 
@@ -301,7 +337,17 @@ class StorageService {
       })
     );
 
-    this.initUserStorage({ id, email: userEmail, name: userName });
+    this.initUserStorage({
+      id,
+      email: userEmail,
+      name: userName,
+      phone: typeof userOrId === 'object' ? userOrId.phone : undefined,
+      accountType: typeof userOrId === 'object' ? userOrId.accountType : undefined
+    });
+
+    // Update lastLoginAt in registered accounts index
+    this.touchAccountLogin(id);
+
     this.notify();
   }
 
@@ -314,14 +360,199 @@ class StorageService {
   }
 
   public getCurrentUserName(): string {
-    return this.currentUserName || 'Shubham Godage';
+    return this.currentUserName || 'Account Holder';
   }
 
   public async updateUserProfile(data: { name?: string }): Promise<{ success: boolean; error?: string }> {
     return this.updateProfile(data);
   }
 
-  private initUserStorage(user: { id: string; email: string; name?: string }) {
+  // MULTI-ACCOUNT MANAGEMENT & ISOLATED REGISTRY
+  public getRegisteredAccounts(): RegisteredAccount[] {
+    try {
+      const raw = localStorage.getItem('smm_registered_accounts');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  }
+
+  public saveRegisteredAccount(account: RegisteredAccount): void {
+    const list = this.getRegisteredAccounts().filter(a => a.id !== account.id && a.identifier !== account.identifier);
+    list.unshift(account);
+    localStorage.setItem('smm_registered_accounts', JSON.stringify(list));
+  }
+
+  public deleteRegisteredAccount(accountId: string): void {
+    // Delete all keys belonging to this account
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(`smm_user_${accountId}_`)) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+
+    const list = this.getRegisteredAccounts().filter(a => a.id !== accountId);
+    localStorage.setItem('smm_registered_accounts', JSON.stringify(list));
+
+    if (this.currentUserId === accountId) {
+      this.logout();
+    }
+    this.notify();
+  }
+
+  private touchAccountLogin(accountId: string): void {
+    const list = this.getRegisteredAccounts();
+    const idx = list.findIndex(a => a.id === accountId);
+    if (idx !== -1) {
+      list[idx].lastLoginAt = new Date().toISOString();
+      localStorage.setItem('smm_registered_accounts', JSON.stringify(list));
+    }
+  }
+
+  /**
+   * Register a new account with complete data isolation.
+   * New accounts start with empty Khata, Expenses, Loans, and separate PINs.
+   */
+  public async registerAccount(params: {
+    name: string;
+    identifier: string; // email or phone
+    accountType: 'Email' | 'Mobile';
+    password?: string;
+    loginPin?: string;
+    transactionPin?: string;
+  }): Promise<{ success: boolean; account?: RegisteredAccount; error?: string }> {
+    const trimmedIdentifier = params.identifier.trim();
+    if (!trimmedIdentifier) {
+      return { success: false, error: 'Valid email or mobile number is required' };
+    }
+    if (!params.name.trim()) {
+      return { success: false, error: 'Full name is required' };
+    }
+
+    // Ensure Login PIN and Transaction PIN are distinct
+    if (params.loginPin && params.transactionPin && params.loginPin === params.transactionPin) {
+      return {
+        success: false,
+        error: 'Security Policy: Login PIN and Transaction PIN must not be identical.'
+      };
+    }
+
+    // Check duplicate
+    const accounts = this.getRegisteredAccounts();
+    const duplicate = accounts.find(
+      a => a.identifier.toLowerCase() === trimmedIdentifier.toLowerCase()
+    );
+    if (duplicate) {
+      return {
+        success: false,
+        error: `An account with ${trimmedIdentifier} is already registered. Please sign in instead.`
+      };
+    }
+
+    const newUserId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    let passwordHash = '';
+    if (params.password) {
+      passwordHash = await hashPassword(params.password, newUserId);
+    }
+
+    let loginPinHash = '';
+    let isLoginPinSet = false;
+    let loginPinLen: 4 | 6 = 4;
+    if (params.loginPin && (params.loginPin.length === 4 || params.loginPin.length === 6)) {
+      loginPinHash = await hashLoginPin(params.loginPin, newUserId);
+      isLoginPinSet = true;
+      loginPinLen = params.loginPin.length as 4 | 6;
+    }
+
+    let txnPinHash = '';
+    let isTxnPinSet = false;
+    let txnPinLen: 4 | 6 = 4;
+    if (params.transactionPin && (params.transactionPin.length === 4 || params.transactionPin.length === 6)) {
+      txnPinHash = await hashTransactionPin(params.transactionPin, newUserId);
+      isTxnPinSet = true;
+      txnPinLen = params.transactionPin.length as 4 | 6;
+    }
+
+    const newProfile: UserProfile = {
+      id: newUserId,
+      name: params.name.trim(),
+      email: params.accountType === 'Email' ? trimmedIdentifier : undefined,
+      phone: params.accountType === 'Mobile' ? trimmedIdentifier : undefined,
+      accountIdentifier: trimmedIdentifier,
+      accountType: params.accountType,
+      loginPinHash,
+      loginPinLength: loginPinLen,
+      isLoginPinSet,
+      pinHash: txnPinHash,
+      pinLength: txnPinLen,
+      isPinSet: isTxnPinSet,
+      createdAt: new Date().toISOString()
+    };
+
+    // STRICT ISOLATION: Initialize pure, empty financial records for new account
+    localStorage.setItem(`smm_user_${newUserId}_user_profile`, JSON.stringify(newProfile));
+    localStorage.setItem(`smm_user_${newUserId}_khata_people`, JSON.stringify([]));
+    localStorage.setItem(`smm_user_${newUserId}_khata_transactions`, JSON.stringify([]));
+    localStorage.setItem(`smm_user_${newUserId}_expenses`, JSON.stringify([]));
+    localStorage.setItem(`smm_user_${newUserId}_long_term_loans`, JSON.stringify([]));
+
+    const regAccount: RegisteredAccount = {
+      id: newUserId,
+      name: params.name.trim(),
+      identifier: trimmedIdentifier,
+      accountType: params.accountType,
+      createdAt: newProfile.createdAt!,
+      hasLoginPin: isLoginPinSet,
+      hasTxnPin: isTxnPinSet,
+      passwordHash: passwordHash || undefined
+    };
+
+    this.saveRegisteredAccount(regAccount);
+
+    return { success: true, account: regAccount };
+  }
+
+  public async verifyAccountPassword(identifier: string, password: string): Promise<{ success: boolean; account?: RegisteredAccount; error?: string }> {
+    const trimmed = identifier.trim().toLowerCase();
+    const accounts = this.getRegisteredAccounts();
+    const account = accounts.find(a => a.identifier.toLowerCase() === trimmed);
+    if (!account) {
+      return { success: false, error: 'No account found with this email or mobile number.' };
+    }
+    if (!account.passwordHash) {
+      return { success: true, account };
+    }
+    const hash = await hashPassword(password, account.id);
+    if (hash !== account.passwordHash) {
+      return { success: false, error: 'Invalid password. Please verify and try again.' };
+    }
+    return { success: true, account };
+  }
+
+  public loginWithAccount(account: RegisteredAccount): void {
+    this.setCurrentUser(account.id, account.accountType === 'Email' ? account.identifier : '', account.name);
+    const accounts = this.getRegisteredAccounts();
+    const idx = accounts.findIndex(a => a.id === account.id);
+    if (idx !== -1) {
+      accounts[idx].lastLoginAt = new Date().toISOString();
+      localStorage.setItem('smm_registered_accounts', JSON.stringify(accounts));
+    }
+    this.login();
+  }
+
+  private initUserStorage(user: {
+    id: string;
+    email: string;
+    name?: string;
+    phone?: string;
+    accountType?: 'Email' | 'Mobile';
+  }) {
     const profileKey = this.getKey('user_profile');
     const khataPeopleKey = this.getKey('khata_people');
     const khataTxsKey = this.getKey('khata_transactions');
@@ -330,55 +561,22 @@ class StorageService {
 
     const existingProfile = localStorage.getItem(profileKey);
     if (!existingProfile) {
-      const isShubham =
-        user.email.toLowerCase() === 'forexwithshubham0012@gmail.com' ||
-        user.id === 'shubham_godage_primary' ||
-        user.name?.toLowerCase().includes('shubham');
-      const hasLegacyData = Boolean(localStorage.getItem(LEGACY_STORAGE_KEYS.KHATA_PEOPLE));
-
-      if (isShubham && hasLegacyData) {
-        // Safe migration of existing Shubham data into new user vault
-        try {
-          const oldProfile = localStorage.getItem(LEGACY_STORAGE_KEYS.USER_PROFILE);
-          if (oldProfile) {
-            localStorage.setItem(profileKey, oldProfile);
-          } else {
-            localStorage.setItem(
-              profileKey,
-              JSON.stringify({
-                id: user.id,
-                name: user.name || 'Shubham Godage',
-                email: user.email,
-                pinHash: '',
-                pinLength: 4,
-                isPinSet: false
-              })
-            );
-          }
-
-          const oldPeople = localStorage.getItem(LEGACY_STORAGE_KEYS.KHATA_PEOPLE);
-          if (oldPeople) localStorage.setItem(khataPeopleKey, oldPeople);
-
-          const oldTxs = localStorage.getItem(LEGACY_STORAGE_KEYS.KHATA_TRANSACTIONS);
-          if (oldTxs) localStorage.setItem(khataTxsKey, oldTxs);
-
-          const oldExpenses = localStorage.getItem(LEGACY_STORAGE_KEYS.EXPENSES);
-          if (oldExpenses) localStorage.setItem(expensesKey, oldExpenses);
-
-          const oldLoans = localStorage.getItem(LEGACY_STORAGE_KEYS.LONG_TERM_LOANS);
-          if (oldLoans) localStorage.setItem(loansKey, oldLoans);
-        } catch (e) {
-          console.error('Data migration error:', e);
-        }
-      } else if (isShubham && !hasLegacyData) {
-        // Default initial data for Shubham Godage
+      // If this is the initial primary vault and legacy sample demo data exists
+      if (user.id === 'primary_vault_user' || user.id === 'shubham_godage_primary') {
         const profile: UserProfile = {
           id: user.id,
-          name: user.name || 'Shubham Godage',
+          name: user.name || 'Primary Vault',
           email: user.email,
+          phone: user.phone,
+          accountIdentifier: user.email || user.phone || 'user@nexmoney.internal',
+          accountType: user.accountType || 'Email',
+          loginPinHash: '',
+          loginPinLength: 4,
+          isLoginPinSet: false,
           pinHash: '',
           pinLength: 4,
-          isPinSet: false
+          isPinSet: false,
+          createdAt: new Date().toISOString()
         };
         localStorage.setItem(profileKey, JSON.stringify(profile));
         localStorage.setItem(khataPeopleKey, JSON.stringify(DEFAULT_KHATA_PEOPLE));
@@ -386,15 +584,21 @@ class StorageService {
         localStorage.setItem(expensesKey, JSON.stringify(DEFAULT_EXPENSES));
         localStorage.setItem(loansKey, JSON.stringify(DEFAULT_LONG_TERM_LOANS));
       } else {
-        // ANY NEW FAMILY MEMBER (User B, User C, etc.)
-        // FRESH, EMPTY, COMPLETELY ISOLATED FINANCIAL VAULT
+        // ANY NEW USER: Clean, completely isolated empty financial vault
         const profile: UserProfile = {
           id: user.id,
-          name: user.name || user.email.split('@')[0],
+          name: user.name || (user.email ? user.email.split('@')[0] : 'User'),
           email: user.email,
+          phone: user.phone,
+          accountIdentifier: user.email || user.phone,
+          accountType: user.accountType || (user.email ? 'Email' : 'Mobile'),
+          loginPinHash: '',
+          loginPinLength: 4,
+          isLoginPinSet: false,
           pinHash: '',
           pinLength: 4,
-          isPinSet: false
+          isPinSet: false,
+          createdAt: new Date().toISOString()
         };
         localStorage.setItem(profileKey, JSON.stringify(profile));
         localStorage.setItem(khataPeopleKey, JSON.stringify([]));
@@ -578,7 +782,117 @@ class StorageService {
     this.notify();
   }
 
-  // TRANSACTION PIN METHODS
+  // LOGIN PIN METHODS (COMPLETELY SEPARATE FROM TRANSACTION PIN)
+  public hasLoginPin(forUserId?: string): boolean {
+    const targetUserId = forUserId || this.currentUserId;
+    const raw = localStorage.getItem(`smm_user_${targetUserId}_user_profile`);
+    if (raw) {
+      try {
+        const p = JSON.parse(raw);
+        return Boolean(p.isLoginPinSet && p.loginPinHash);
+      } catch {}
+    }
+    const profile = this.getProfile();
+    return Boolean(profile.isLoginPinSet && profile.loginPinHash);
+  }
+
+  public async verifyLoginPin(enteredPin: string, forUserId?: string): Promise<boolean> {
+    const targetUserId = forUserId || this.currentUserId;
+    let storedHash = '';
+    const raw = localStorage.getItem(`smm_user_${targetUserId}_user_profile`);
+    if (raw) {
+      try {
+        const p = JSON.parse(raw);
+        storedHash = p.loginPinHash || '';
+      } catch {}
+    }
+    if (!storedHash && targetUserId === this.currentUserId) {
+      const profile = this.getProfile();
+      storedHash = profile.loginPinHash || '';
+    }
+    if (!storedHash) return false;
+
+    const enteredHash = await hashLoginPin(enteredPin, targetUserId);
+    return enteredHash === storedHash;
+  }
+
+  public async setLoginPin(newPin: string, forUserId?: string): Promise<{ success: boolean; error?: string }> {
+    if (newPin.length !== 4 && newPin.length !== 6) {
+      return { success: false, error: 'Login PIN must be either 4 or 6 numeric digits' };
+    }
+    const targetUserId = forUserId || this.currentUserId;
+
+    // Check separation: ensure Login PIN does not equal current Transaction PIN
+    const profile = this.getProfile();
+    if (profile.isPinSet && profile.pinHash) {
+      const isSameAsTxn = (await hashTransactionPin(newPin, targetUserId)) === profile.pinHash;
+      if (isSameAsTxn) {
+        return {
+          success: false,
+          error: 'Security Policy: Login PIN cannot be identical to your Transaction PIN.'
+        };
+      }
+    }
+
+    const newHash = await hashLoginPin(newPin, targetUserId);
+    const raw = localStorage.getItem(`smm_user_${targetUserId}_user_profile`);
+    let userProf: UserProfile;
+    if (raw) {
+      try {
+        userProf = JSON.parse(raw);
+      } catch {
+        userProf = this.getProfile();
+      }
+    } else {
+      userProf = this.getProfile();
+    }
+
+    userProf.loginPinHash = newHash;
+    userProf.loginPinLength = newPin.length as 4 | 6;
+    userProf.isLoginPinSet = true;
+
+    localStorage.setItem(`smm_user_${targetUserId}_user_profile`, JSON.stringify(userProf));
+
+    // Update registered account metadata if present
+    const accounts = this.getRegisteredAccounts();
+    const idx = accounts.findIndex(a => a.id === targetUserId);
+    if (idx !== -1) {
+      accounts[idx].hasLoginPin = true;
+      localStorage.setItem('smm_registered_accounts', JSON.stringify(accounts));
+    }
+
+    this.notify();
+    return { success: true };
+  }
+
+  public async checkHasLoginPin(): Promise<boolean> {
+    const rpcResult = await hasLoginPinRpc();
+    if (rpcResult !== null) {
+      return rpcResult;
+    }
+    return this.hasLoginPin();
+  }
+
+  public async verifyAppLoginPin(pin: string): Promise<boolean> {
+    const rpcResult = await verifyLoginPinRpc(pin);
+    if (rpcResult !== null) {
+      return rpcResult;
+    }
+    return this.verifyLoginPin(pin);
+  }
+
+  public async setAppLoginPin(newPin: string): Promise<{ success: boolean; error?: string }> {
+    const localResult = await this.setLoginPin(newPin);
+    if (!localResult.success) return localResult;
+
+    const rpcResult = await setLoginPinRpc(newPin);
+    if (rpcResult !== null && !rpcResult.success) {
+      return rpcResult;
+    }
+    return { success: true };
+  }
+
+  // TRANSACTION PIN METHODS (FOR MONEY TRANSFERS, LOANS, KHATA & REPORT EXPORTS)
   public hasPin(): boolean {
     const profile = this.getProfile();
     return Boolean(profile.isPinSet && profile.pinHash);
@@ -589,25 +903,46 @@ class StorageService {
     if (!profile.pinHash || !profile.isPinSet) {
       return false; // Strictly reject if no PIN set - no default fallback
     }
-    const enteredHash = await hashPin(enteredPin);
+    const enteredHash = await hashTransactionPin(enteredPin, this.currentUserId);
     return enteredHash === profile.pinHash;
   }
 
-  public async setPin(newPin: string): Promise<boolean> {
+  public async setPin(newPin: string): Promise<{ success: boolean; error?: string }> {
     if (newPin.length !== 4 && newPin.length !== 6) {
-      throw new Error('PIN must be either 4 or 6 numeric digits');
+      return { success: false, error: 'Transaction PIN must be either 4 or 6 numeric digits' };
     }
-    const newHash = await hashPin(newPin);
-    const currentProfile = this.getProfile();
+
+    // Check separation: ensure Transaction PIN does not equal current Login PIN
+    const profile = this.getProfile();
+    if (profile.isLoginPinSet && profile.loginPinHash) {
+      const isSameAsLogin = (await hashLoginPin(newPin, this.currentUserId)) === profile.loginPinHash;
+      if (isSameAsLogin) {
+        return {
+          success: false,
+          error: 'Security Policy: Transaction PIN cannot be identical to your Login PIN.'
+        };
+      }
+    }
+
+    const newHash = await hashTransactionPin(newPin, this.currentUserId);
     const updated: UserProfile = {
-      ...currentProfile,
+      ...profile,
       pinHash: newHash,
       pinLength: newPin.length as 4 | 6,
       isPinSet: true
     };
     localStorage.setItem(this.getKey('user_profile'), JSON.stringify(updated));
+
+    // Update registered account metadata if present
+    const accounts = this.getRegisteredAccounts();
+    const idx = accounts.findIndex(a => a.id === this.currentUserId);
+    if (idx !== -1) {
+      accounts[idx].hasTxnPin = true;
+      localStorage.setItem('smm_registered_accounts', JSON.stringify(accounts));
+    }
+
     this.notify();
-    return true;
+    return { success: true };
   }
 
   /**
@@ -639,12 +974,14 @@ class StorageService {
     if (newPin.length !== 4 && newPin.length !== 6) {
       return { success: false, error: 'PIN must be either 4 or 6 numeric digits' };
     }
+    const localResult = await this.setPin(newPin);
+    if (!localResult.success) {
+      return localResult;
+    }
     const rpcResult = await setAppPinRpc(newPin);
     if (rpcResult !== null && !rpcResult.success) {
       return rpcResult;
     }
-    // Also update local secure hashed state for this user
-    await this.setPin(newPin);
     return { success: true };
   }
 
@@ -951,10 +1288,10 @@ class StorageService {
         tx.type === 'Short-Term Loan Borrowed'
       ) {
         // Notice:
-        // Money Given: Shubham gives money (Receivable)
-        // Money Received: Shubham gets money back (Reduces receivable)
-        // Short-Term Loan Given: Shubham gives loan (Receivable)
-        // Short-Term Loan Borrowed: Shubham receives borrowed money (Payable)
+        // Money Given: User gives money (Receivable)
+        // Money Received: User gets money back (Reduces receivable)
+        // Short-Term Loan Given: User gives loan (Receivable)
+        // Short-Term Loan Borrowed: User receives borrowed money (Payable)
         // Loan Return: Return of loan
       }
     }
@@ -963,9 +1300,9 @@ class StorageService {
     // Money Given to Person: +Given
     // Money Received from Person: +Received
     // Short-Term Loan Given: +Given
-    // Short-Term Loan Borrowed: Shubham borrowed from them (+Received/Payable)
+    // Short-Term Loan Borrowed: User borrowed from them (+Received/Payable)
     // Loan Return:
-    // If Shubham gave money and person returns: Person gives to Shubham (+Received)
+    // If User gave money and person returns: Person gives to User (+Received)
     let given = 0;
     let received = 0;
     let borrowedFromPerson = 0;
@@ -985,7 +1322,7 @@ class StorageService {
           borrowedFromPerson += amt;
           break;
         case 'Loan Return':
-          // If given > received, this was person returning money to Shubham
+          // If given > received, this was person returning money to User
           if (given > received) {
             received += amt;
           } else {
@@ -996,8 +1333,8 @@ class StorageService {
     }
 
     // Net amounts:
-    // Shubham's receivable from person: (given - received)
-    // Shubham's payable to person: (borrowedFromPerson - returnedToPerson)
+    // User's receivable from person: (given - received)
+    // User's payable to person: (borrowedFromPerson - returnedToPerson)
     const netReceivable = Math.max(0, given - received);
     const netPayable = Math.max(0, borrowedFromPerson - returnedToPerson);
     const remainingAmount = netReceivable > 0 ? netReceivable : netPayable;

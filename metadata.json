@@ -1,6 +1,7 @@
 {
-  "name": "Shubham Banking NexMoney",
+  "name": "NEXMONEY",
   "description": "Personal Finance Management: Secure multi-user vaults for Khata, Personal Expenses, and Long-Term Loans with per-user UTR validation.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
+
