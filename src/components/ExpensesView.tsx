@@ -169,9 +169,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ searchFilter }) => {
         : `Confirm Expense of ${formatCurrency(amt)}`
     );
 
-    setPendingAction(() => () => {
+    setPendingAction(() => async () => {
       if (editingExpense) {
-        const res = storage.updateExpense(editingExpense.id, {
+        const res = await storage.updateExpense(editingExpense.id, {
           amount: amt,
           category: form.category,
           date: form.date,
@@ -186,7 +186,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ searchFilter }) => {
           showError(res.error || 'Failed to update expense');
         }
       } else {
-        const res = storage.addExpense({
+        const res = await storage.addExpense({
           amount: amt,
           category: form.category,
           date: form.date,
@@ -208,8 +208,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({ searchFilter }) => {
 
   const handleDelete = (exp: Expense) => {
     setPinPromptTitle(`Confirm Delete Expense of ${formatCurrency(exp.amount)}`);
-    setPendingAction(() => () => {
-      storage.deleteExpense(exp.id);
+    setPendingAction(() => async () => {
+      await storage.deleteExpense(exp.id);
       showSuccess('✓ Expense deleted successfully');
     });
     setShowPinModal(true);

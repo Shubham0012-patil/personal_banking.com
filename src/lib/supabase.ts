@@ -52,6 +52,33 @@ export const SUPABASE_CONFIG = {
   }
 };
 
+export interface SupabaseErrorInfo {
+  message: string;
+  details: string | null;
+  hint: string | null;
+  code: string | null;
+}
+
+/**
+ * Standard Supabase error logger complying with error logging requirement:
+ * logs error.message, error.details, error.hint, error.code
+ */
+export function logSupabaseError(operation: string, error: any): SupabaseErrorInfo {
+  const info: SupabaseErrorInfo = {
+    message: error?.message || String(error),
+    details: error?.details || null,
+    hint: error?.hint || null,
+    code: error?.code || null
+  };
+  console.error(`[Supabase Error - ${operation}]:`, {
+    message: info.message,
+    details: info.details,
+    hint: info.hint,
+    code: info.code
+  });
+  return info;
+}
+
 /**
  * Call the secure Supabase RPC has_app_pin()
  * Returns null if RPC is not available in database
@@ -429,24 +456,24 @@ ALTER TABLE loan_repayments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE global_utr_registry ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "User profiles policy" ON profiles;
-CREATE POLICY "User profiles policy" ON profiles FOR ALL USING (auth.uid() = id);
+CREATE POLICY "User profiles policy" ON profiles FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 
 DROP POLICY IF EXISTS "User khata_people policy" ON khata_people;
-CREATE POLICY "User khata_people policy" ON khata_people FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "User khata_people policy" ON khata_people FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "User khata_transactions policy" ON khata_transactions;
-CREATE POLICY "User khata_transactions policy" ON khata_transactions FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "User khata_transactions policy" ON khata_transactions FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "User expenses policy" ON expenses;
-CREATE POLICY "User expenses policy" ON expenses FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "User expenses policy" ON expenses FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "User long_term_loans policy" ON long_term_loans;
-CREATE POLICY "User long_term_loans policy" ON long_term_loans FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "User long_term_loans policy" ON long_term_loans FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "User loan_repayments policy" ON loan_repayments;
-CREATE POLICY "User loan_repayments policy" ON loan_repayments FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "User loan_repayments policy" ON loan_repayments FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "User global_utr_registry policy" ON global_utr_registry;
-CREATE POLICY "User global_utr_registry policy" ON global_utr_registry FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "User global_utr_registry policy" ON global_utr_registry FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 `;
 

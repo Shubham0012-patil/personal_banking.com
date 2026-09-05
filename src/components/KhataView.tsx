@@ -104,15 +104,15 @@ export const KhataView: React.FC<KhataViewProps> = ({ searchFilter }) => {
     setShowPersonModal(true);
   };
 
-  const handleSavePerson = (e: React.FormEvent) => {
+  const handleSavePerson = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!personForm.name.trim()) return;
 
     if (editingPerson) {
-      storage.updateKhataPerson(editingPerson.id, personForm);
+      await storage.updateKhataPerson(editingPerson.id, personForm);
       showSuccess(`✓ Updated ${personForm.name}'s account`);
     } else {
-      const created = storage.addKhataPerson(personForm);
+      const created = await storage.addKhataPerson(personForm);
       showSuccess(`✓ Added ${personForm.name} to Khata ledger`);
       setSelectedPersonId(created.id);
     }
@@ -121,8 +121,8 @@ export const KhataView: React.FC<KhataViewProps> = ({ searchFilter }) => {
 
   const handleDeletePerson = (p: KhataPerson) => {
     setPinPromptTitle(`Confirm Delete ${p.name}'s Ledger`);
-    setPendingAction(() => () => {
-      storage.deleteKhataPerson(p.id);
+    setPendingAction(() => async () => {
+      await storage.deleteKhataPerson(p.id);
       if (selectedPersonId === p.id) {
         setSelectedPersonId(null);
       }
@@ -197,9 +197,9 @@ export const KhataView: React.FC<KhataViewProps> = ({ searchFilter }) => {
         : `Confirm Transaction of ${formatCurrency(amt)}`
     );
 
-    setPendingAction(() => () => {
+    setPendingAction(() => async () => {
       if (editingTx) {
-        const res = storage.updateKhataTransaction(editingTx.id, {
+        const res = await storage.updateKhataTransaction(editingTx.id, {
           personId: targetPerson.id,
           personName: targetPerson.name,
           type: txForm.type,
@@ -217,7 +217,7 @@ export const KhataView: React.FC<KhataViewProps> = ({ searchFilter }) => {
           showError(res.error || 'Failed to update transaction');
         }
       } else {
-        const res = storage.addKhataTransaction({
+        const res = await storage.addKhataTransaction({
           personId: targetPerson.id,
           personName: targetPerson.name,
           type: txForm.type,
@@ -242,8 +242,8 @@ export const KhataView: React.FC<KhataViewProps> = ({ searchFilter }) => {
 
   const handleDeleteTx = (tx: KhataTransaction) => {
     setPinPromptTitle(`Confirm Delete Entry of ${formatCurrency(tx.amount)}`);
-    setPendingAction(() => () => {
-      storage.deleteKhataTransaction(tx.id);
+    setPendingAction(() => async () => {
+      await storage.deleteKhataTransaction(tx.id);
       showSuccess('✓ Transaction deleted successfully');
     });
     setShowPinModal(true);

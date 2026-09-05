@@ -197,6 +197,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       // 2. Register account in local storage with strict isolation and blank financial profile
       const regRes = await storage.registerAccount({
+        id: supabaseUid,
         name: cleanName,
         identifier: cleanEmail,
         accountType: 'Email',
@@ -296,12 +297,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         let existing = registeredAccounts.find(a => a.id === uid || a.identifier.toLowerCase() === cleanEmail);
         if (!existing) {
           const newAcc = await storage.registerAccount({
+            id: uid,
             name,
             identifier: cleanEmail,
             accountType: 'Email',
             password
           });
           existing = newAcc.account;
+        } else if (existing.id !== uid) {
+          existing.id = uid;
+          storage.saveRegisteredAccount(existing);
         }
 
         if (existing) {

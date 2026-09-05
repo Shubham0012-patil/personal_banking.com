@@ -204,9 +204,9 @@ export const LongTermLoansView: React.FC<LongTermLoansViewProps> = ({ searchFilt
         : `Confirm Loan Entry of ${formatCurrency(amt)}`
     );
 
-    setPendingAction(() => () => {
+    setPendingAction(() => async () => {
       if (editingLoan) {
-        const res = storage.updateLongTermLoan(editingLoan.id, {
+        const res = await storage.updateLongTermLoan(editingLoan.id, {
           personName: loanForm.personName.trim(),
           loanType: loanForm.loanType,
           originalAmount: amt,
@@ -223,7 +223,7 @@ export const LongTermLoansView: React.FC<LongTermLoansViewProps> = ({ searchFilt
           showError(res.error || 'Failed to update loan');
         }
       } else {
-        const res = storage.addLongTermLoan({
+        const res = await storage.addLongTermLoan({
           personName: loanForm.personName.trim(),
           loanType: loanForm.loanType,
           originalAmount: amt,
@@ -247,8 +247,8 @@ export const LongTermLoansView: React.FC<LongTermLoansViewProps> = ({ searchFilt
 
   const handleDeleteLoan = (loan: LongTermLoan) => {
     setPinPromptTitle(`Confirm Delete Loan of ${loan.personName}`);
-    setPendingAction(() => () => {
-      storage.deleteLongTermLoan(loan.id);
+    setPendingAction(() => async () => {
+      await storage.deleteLongTermLoan(loan.id);
       showSuccess(`✓ Deleted loan record for ${loan.personName}`);
     });
     setShowPinModal(true);
@@ -305,8 +305,8 @@ export const LongTermLoansView: React.FC<LongTermLoansViewProps> = ({ searchFilt
     }
 
     setPinPromptTitle(`Authorize Repayment of ${formatCurrency(amt)}`);
-    setPendingAction(() => () => {
-      const res = storage.addLoanRepayment(targetLoanForRepayment.id, {
+    setPendingAction(() => async () => {
+      const res = await storage.addLoanRepayment(targetLoanForRepayment.id, {
         amount: amt,
         date: repaymentForm.date,
         paymentMethod: repaymentForm.paymentMethod,
@@ -331,8 +331,8 @@ export const LongTermLoansView: React.FC<LongTermLoansViewProps> = ({ searchFilt
 
   const handleDeleteRepayment = (loanId: string, repId: string, amt: number) => {
     setPinPromptTitle(`Confirm Delete Repayment (${formatCurrency(amt)})`);
-    setPendingAction(() => () => {
-      storage.deleteLoanRepayment(loanId, repId);
+    setPendingAction(() => async () => {
+      await storage.deleteLoanRepayment(loanId, repId);
       showSuccess('✓ Repayment entry removed and loan balance recalculated');
     });
     setShowPinModal(true);

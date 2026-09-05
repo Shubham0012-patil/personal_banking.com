@@ -8,10 +8,12 @@ import {
   UserProfile,
   RegisteredAccount,
   ExpenseCategory,
-  KhataTransactionType
+  KhataTransactionType,
+  LoanType
 } from '../types';
 import {
   getSupabase,
+  logSupabaseError,
   hasAppPinRpc,
   setAppPinRpc,
   verifyAppPinRpc,
@@ -348,7 +350,187 @@ class StorageService {
     // Update lastLoginAt in registered accounts index
     this.touchAccountLogin(id);
 
+    if (this.isSupabaseUser(id)) {
+      this.fetchFromSupabase().catch(err => {
+        console.error('Initial fetchFromSupabase error:', err);
+      });
+    }
+
     this.notify();
+  }
+
+  public isSupabaseUser(id: string): boolean {
+    if (!id) return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  }
+
+  /**
+   * Fetch all records from Supabase tables for the authenticated user (auth.uid() = user_id)
+   * Populates local storage cache and notifies components.
+   */
+  public async fetchFromSupabase(): Promise<{ success: boolean; error?: string }> {
+    const supabase = getSupabase();
+    if (!supabase || !this.isSupabaseUser(this.currentUserId)) {
+      return { success: false, error: 'No active Supabase user session' };
+    }
+
+    try {
+      const uid = this.currentUserId;
+
+      // 1. Fetch Profile
+      const { data: profileRow, error: profileErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', uid)
+        .maybeSingle();
+
+      if (profileErr) {
+        logSupabaseError('fetch profiles', profileErr);
+      } else if (profileRow) {
+        const localProf = this.getProfile();
+        const updatedProf: UserProfile = {
+          ...localProf,
+          id: profileRow.id,
+          name: profileRow.full_name || localProf.name,
+          email: profileRow.email || localProf.email,
+          createdAt: profileRow.created_at || localProf.createdAt
+        };
+        localStorage.setItem(this.getKey('user_profile'), JSON.stringify(updatedProf));
+      }
+
+      // 2. Fetch Khata People
+      const { data: peopleRows, error: peopleErr } = await supabase
+        .from('khata_people')
+        .select('*')
+        .eq('user_id', uid)
+        .order('created_at', { ascending: false });
+
+      if (peopleErr) {
+        logSupabaseError('fetch khata_people', peopleErr);
+      } else if (peopleRows) {
+        const mappedPeople: KhataPerson[] = peopleRows.map(r => ({
+          id: r.id,
+          userId: r.user_id,
+          name: r.name,
+          phone: r.phone || undefined,
+          notes: r.notes || undefined,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at
+        }));
+        localStorage.setItem(this.getKey('khata_people'), JSON.stringify(mappedPeople));
+      }
+
+      // 3. Fetch Khata Transactions
+      const { data: txRows, error: txErr } = await supabase
+        .from('khata_transactions')
+        .select('*')
+        .eq('user_id', uid)
+        .order('transaction_date', { ascending: false });
+
+      if (txErr) {
+        logSupabaseError('fetch khata_transactions', txErr);
+      } else if (txRows) {
+        const mappedTxs: KhataTransaction[] = txRows.map(r => ({
+          id: r.id,
+          userId: r.user_id,
+          personId: r.person_id,
+          personName: r.person_name,
+          type: r.type as KhataTransactionType,
+          amount: Number(r.amount),
+          date: r.transaction_date,
+          paymentMethod: r.payment_method,
+          utrNumber: r.utr_number || undefined,
+          notes: r.notes || undefined,
+          createdAt: r.created_at
+        }));
+        localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(mappedTxs));
+      }
+
+      // 4. Fetch Expenses
+      const { data: expRows, error: expErr } = await supabase
+        .from('expenses')
+        .select('*')
+        .eq('user_id', uid)
+        .order('expense_date', { ascending: false });
+
+      if (expErr) {
+        logSupabaseError('fetch expenses', expErr);
+      } else if (expRows) {
+        const mappedExpenses: Expense[] = expRows.map(r => ({
+          id: r.id,
+          userId: r.user_id,
+          amount: Number(r.amount),
+          category: r.category as ExpenseCategory,
+          date: r.expense_date,
+          paymentMethod: r.payment_method,
+          utrNumber: r.utr_number || undefined,
+          notes: r.notes || undefined,
+          createdAt: r.created_at
+        }));
+        localStorage.setItem(this.getKey('expenses'), JSON.stringify(mappedExpenses));
+      }
+
+      // 5. Fetch Long Term Loans and Repayments
+      const { data: loanRows, error: loanErr } = await supabase
+        .from('long_term_loans')
+        .select('*')
+        .eq('user_id', uid)
+        .order('start_date', { ascending: false });
+
+      const { data: repRows, error: repErr } = await supabase
+        .from('loan_repayments')
+        .select('*')
+        .eq('user_id', uid)
+        .order('repayment_date', { ascending: false });
+
+      if (loanErr) {
+        logSupabaseError('fetch long_term_loans', loanErr);
+      }
+      if (repErr) {
+        logSupabaseError('fetch loan_repayments', repErr);
+      }
+
+      if (loanRows) {
+        const allRepayments: LoanRepayment[] = (repRows || []).map(r => ({
+          id: r.id,
+          userId: r.user_id,
+          loanId: r.loan_id,
+          amount: Number(r.amount),
+          date: r.repayment_date,
+          paymentMethod: r.payment_method,
+          utrNumber: r.utr_number || undefined,
+          notes: r.notes || undefined,
+          createdAt: r.created_at
+        }));
+
+        const mappedLoans: LongTermLoan[] = loanRows.map(r => ({
+          id: r.id,
+          userId: r.user_id,
+          personName: r.person_name,
+          loanType: r.loan_type as LoanType,
+          originalAmount: Number(r.original_amount),
+          startDate: r.start_date,
+          expectedReturnDate: r.expected_return_date,
+          paymentMethod: r.payment_method,
+          utrNumber: r.utr_number || undefined,
+          notes: r.notes || undefined,
+          status: r.status as LongTermLoan['status'],
+          closedDate: r.closed_date || undefined,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+          repayments: allRepayments.filter(rep => rep.loanId === r.id)
+        }));
+        localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(mappedLoans));
+      }
+
+      // Rebuild local UTR registry from fresh records
+      this.rebuildGlobalUtrRegistry();
+      this.notify();
+      return { success: true };
+    } catch (err: any) {
+      logSupabaseError('fetchFromSupabase catch', err);
+      return { success: false, error: err?.message || 'Failed to fetch from Supabase' };
+    }
   }
 
   public getCurrentUser() {
@@ -419,6 +601,7 @@ class StorageService {
    * New accounts start with empty Khata, Expenses, Loans, and separate PINs.
    */
   public async registerAccount(params: {
+    id?: string;
     name: string;
     identifier: string; // email or phone
     accountType: 'Email' | 'Mobile';
@@ -448,13 +631,19 @@ class StorageService {
       a => a.identifier.toLowerCase() === trimmedIdentifier.toLowerCase()
     );
     if (duplicate) {
+      if (params.id && duplicate.id !== params.id) {
+        // Upgrade legacy account ID to the authenticated Supabase UUID
+        duplicate.id = params.id;
+        this.saveRegisteredAccount(duplicate);
+        return { success: true, account: duplicate };
+      }
       return {
         success: false,
         error: `An account with ${trimmedIdentifier} is already registered. Please sign in instead.`
       };
     }
 
-    const newUserId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const newUserId = params.id || `usr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
     let passwordHash = '';
     if (params.password) {
@@ -514,6 +703,23 @@ class StorageService {
     };
 
     this.saveRegisteredAccount(regAccount);
+
+    if (this.isSupabaseUser(newUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        supabase
+          .from('profiles')
+          .upsert({
+            id: newUserId,
+            full_name: params.name.trim(),
+            email: params.accountType === 'Email' ? trimmedIdentifier : null,
+            updated_at: new Date().toISOString()
+          })
+          .then(({ error }) => {
+            if (error) logSupabaseError('upsert profile in registerAccount', error);
+          });
+      }
+    }
 
     return { success: true, account: regAccount };
   }
@@ -620,6 +826,28 @@ class StorageService {
       email: this.currentUserEmail,
       name: this.currentUserName
     });
+
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          logSupabaseError('auth.getSession in storage.init', error);
+        } else if (session?.user?.id) {
+          const uid = session.user.id;
+          const email = session.user.email || '';
+          const name = session.user.user_metadata?.full_name || (email ? email.split('@')[0] : 'User');
+          this.currentUserId = uid;
+          this.currentUserEmail = email;
+          this.currentUserName = name;
+          localStorage.setItem('smm_current_user_id', uid);
+          this.initUserStorage({ id: uid, email, name });
+          await this.fetchFromSupabase();
+        }
+      } catch (sbErr: any) {
+        logSupabaseError('init Supabase session check', sbErr);
+      }
+    }
 
     this.rebuildGlobalUtrRegistry();
     this.initialized = true;
@@ -1124,8 +1352,9 @@ class StorageService {
     }
   }
 
-  public addKhataPerson(data: Omit<KhataPerson, 'id' | 'createdAt' | 'updatedAt'>): KhataPerson {
-    const people = this.getKhataPeople();
+  public async addKhataPerson(
+    data: Omit<KhataPerson, 'id' | 'createdAt' | 'updatedAt'>
+  ): Promise<KhataPerson & { success: boolean; error?: string }> {
     const newPerson: KhataPerson = {
       id: `person-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       userId: this.currentUserId,
@@ -1135,25 +1364,81 @@ class StorageService {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('khata_people')
+          .insert({
+            id: newPerson.id,
+            user_id: this.currentUserId,
+            name: newPerson.name,
+            phone: newPerson.phone || null,
+            notes: newPerson.notes || null,
+            created_at: newPerson.createdAt,
+            updated_at: newPerson.updatedAt
+          });
+
+        if (error) {
+          logSupabaseError('addKhataPerson', error);
+          return { ...newPerson, success: false, error: error.message };
+        }
+      }
+    }
+
+    const people = this.getKhataPeople();
     people.unshift(newPerson);
     localStorage.setItem(this.getKey('khata_people'), JSON.stringify(people));
     this.notify();
-    return newPerson;
+    return { ...newPerson, success: true };
   }
 
-  public updateKhataPerson(
+  public async updateKhataPerson(
     id: string,
     data: Partial<Omit<KhataPerson, 'id' | 'createdAt'>>
-  ): KhataPerson {
+  ): Promise<{ success: boolean; error?: string; person?: KhataPerson }> {
     const people = this.getKhataPeople();
     const index = people.findIndex(p => p.id === id);
-    if (index === -1) throw new Error('Person not found');
+    if (index === -1) return { success: false, error: 'Person not found' };
 
     const updated: KhataPerson = {
       ...people[index],
       ...data,
       updatedAt: new Date().toISOString()
     };
+
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const updatePayload: Record<string, any> = {
+          updated_at: updated.updatedAt
+        };
+        if (data.name !== undefined) updatePayload.name = data.name.trim();
+        if (data.phone !== undefined) updatePayload.phone = data.phone?.trim() || null;
+        if (data.notes !== undefined) updatePayload.notes = data.notes?.trim() || null;
+
+        const { error } = await supabase
+          .from('khata_people')
+          .update(updatePayload)
+          .eq('id', id)
+          .eq('user_id', this.currentUserId);
+
+        if (error) {
+          logSupabaseError('updateKhataPerson', error);
+          return { success: false, error: error.message };
+        }
+
+        if (data.name && data.name !== people[index].name) {
+          await supabase
+            .from('khata_transactions')
+            .update({ person_name: data.name })
+            .eq('person_id', id)
+            .eq('user_id', this.currentUserId);
+        }
+      }
+    }
+
     people[index] = updated;
     localStorage.setItem(this.getKey('khata_people'), JSON.stringify(people));
 
@@ -1165,10 +1450,37 @@ class StorageService {
     }
 
     this.notify();
-    return updated;
+    return { success: true, person: updated };
   }
 
-  public deleteKhataPerson(id: string): void {
+  public async deleteKhataPerson(id: string): Promise<{ success: boolean; error?: string }> {
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        // Delete child transactions first
+        const { error: txErr } = await supabase
+          .from('khata_transactions')
+          .delete()
+          .eq('person_id', id)
+          .eq('user_id', this.currentUserId);
+        if (txErr) {
+          logSupabaseError('deleteKhataPerson - child transactions', txErr);
+          return { success: false, error: txErr.message };
+        }
+
+        const { error } = await supabase
+          .from('khata_people')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', this.currentUserId);
+
+        if (error) {
+          logSupabaseError('deleteKhataPerson', error);
+          return { success: false, error: error.message };
+        }
+      }
+    }
+
     const people = this.getKhataPeople().filter(p => p.id !== id);
     localStorage.setItem(this.getKey('khata_people'), JSON.stringify(people));
 
@@ -1178,6 +1490,7 @@ class StorageService {
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
+    return { success: true };
   }
 
   public getKhataTransactions(): KhataTransaction[] {
@@ -1190,9 +1503,9 @@ class StorageService {
     }
   }
 
-  public addKhataTransaction(
+  public async addKhataTransaction(
     data: Omit<KhataTransaction, 'id' | 'createdAt'>
-  ): { success: boolean; error?: string; transaction?: KhataTransaction } {
+  ): Promise<{ success: boolean; error?: string; transaction?: KhataTransaction }> {
     // 1. Validation
     if (!data.amount || data.amount <= 0) {
       return { success: false, error: 'Transaction amount must be greater than zero.' };
@@ -1215,13 +1528,54 @@ class StorageService {
       }
     }
 
-    const txs = this.getKhataTransactions();
     const newTx: KhataTransaction = {
       ...data,
       id: `kht-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       userId: this.currentUserId,
       createdAt: new Date().toISOString()
     };
+
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('khata_transactions')
+          .insert({
+            id: newTx.id,
+            user_id: this.currentUserId,
+            person_id: newTx.personId,
+            person_name: newTx.personName,
+            type: newTx.type,
+            amount: newTx.amount,
+            transaction_date: newTx.date,
+            payment_method: newTx.paymentMethod,
+            utr_number: newTx.utrNumber || null,
+            notes: newTx.notes || null,
+            created_at: newTx.createdAt
+          });
+
+        if (error) {
+          logSupabaseError('addKhataTransaction', error);
+          return { success: false, error: error.message };
+        }
+
+        if (newTx.utrNumber && !this.isCashOrNoUtr(newTx.utrNumber)) {
+          await supabase.from('global_utr_registry').upsert({
+            id: `utr-${newTx.id}`,
+            user_id: this.currentUserId,
+            utr_number: newTx.utrNumber.trim(),
+            source_module: 'Khata',
+            record_id: newTx.id,
+            amount: newTx.amount,
+            transaction_date: newTx.date,
+            description: `${newTx.type} - ${newTx.personName}`,
+            created_at: newTx.createdAt
+          });
+        }
+      }
+    }
+
+    const txs = this.getKhataTransactions();
     txs.unshift(newTx);
     localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(txs));
 
@@ -1230,10 +1584,10 @@ class StorageService {
     return { success: true, transaction: newTx };
   }
 
-  public updateKhataTransaction(
+  public async updateKhataTransaction(
     id: string,
     data: Partial<Omit<KhataTransaction, 'id' | 'createdAt'>>
-  ): { success: boolean; error?: string; transaction?: KhataTransaction } {
+  ): Promise<{ success: boolean; error?: string; transaction?: KhataTransaction }> {
     const txs = this.getKhataTransactions();
     const index = txs.findIndex(t => t.id === id);
     if (index === -1) return { success: false, error: 'Transaction not found.' };
@@ -1257,6 +1611,46 @@ class StorageService {
       ...txs[index],
       ...data
     };
+
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('khata_transactions')
+          .update({
+            person_id: updated.personId,
+            person_name: updated.personName,
+            type: updated.type,
+            amount: updated.amount,
+            transaction_date: updated.date,
+            payment_method: updated.paymentMethod,
+            utr_number: updated.utrNumber || null,
+            notes: updated.notes || null
+          })
+          .eq('id', id)
+          .eq('user_id', this.currentUserId);
+
+        if (error) {
+          logSupabaseError('updateKhataTransaction', error);
+          return { success: false, error: error.message };
+        }
+
+        if (updated.utrNumber && !this.isCashOrNoUtr(updated.utrNumber)) {
+          await supabase.from('global_utr_registry').upsert({
+            id: `utr-${updated.id}`,
+            user_id: this.currentUserId,
+            utr_number: updated.utrNumber.trim(),
+            source_module: 'Khata',
+            record_id: updated.id,
+            amount: updated.amount,
+            transaction_date: updated.date,
+            description: `${updated.type} - ${updated.personName}`,
+            created_at: updated.createdAt
+          });
+        }
+      }
+    }
+
     txs[index] = updated;
     localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(txs));
 
@@ -1265,11 +1659,34 @@ class StorageService {
     return { success: true, transaction: updated };
   }
 
-  public deleteKhataTransaction(id: string): void {
+  public async deleteKhataTransaction(id: string): Promise<{ success: boolean; error?: string }> {
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('khata_transactions')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', this.currentUserId);
+
+        if (error) {
+          logSupabaseError('deleteKhataTransaction', error);
+          return { success: false, error: error.message };
+        }
+
+        await supabase
+          .from('global_utr_registry')
+          .delete()
+          .eq('record_id', id)
+          .eq('user_id', this.currentUserId);
+      }
+    }
+
     const txs = this.getKhataTransactions().filter(t => t.id !== id);
     localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(txs));
     this.rebuildGlobalUtrRegistry();
     this.notify();
+    return { success: true };
   }
 
   // Calculate Ledger for a single Person
@@ -1388,9 +1805,9 @@ class StorageService {
     }
   }
 
-  public addExpense(
+  public async addExpense(
     data: Omit<Expense, 'id' | 'createdAt'>
-  ): { success: boolean; error?: string; expense?: Expense } {
+  ): Promise<{ success: boolean; error?: string; expense?: Expense }> {
     if (!data.amount || data.amount <= 0) {
       return { success: false, error: 'Expense amount must be greater than zero.' };
     }
@@ -1412,13 +1829,52 @@ class StorageService {
       }
     }
 
-    const expenses = this.getExpenses();
     const newExpense: Expense = {
       ...data,
       id: `exp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       userId: this.currentUserId,
       createdAt: new Date().toISOString()
     };
+
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('expenses')
+          .insert({
+            id: newExpense.id,
+            user_id: this.currentUserId,
+            amount: newExpense.amount,
+            category: newExpense.category,
+            expense_date: newExpense.date,
+            payment_method: newExpense.paymentMethod,
+            utr_number: newExpense.utrNumber || null,
+            notes: newExpense.notes || null,
+            created_at: newExpense.createdAt
+          });
+
+        if (error) {
+          logSupabaseError('addExpense', error);
+          return { success: false, error: error.message };
+        }
+
+        if (newExpense.utrNumber && !this.isCashOrNoUtr(newExpense.utrNumber)) {
+          await supabase.from('global_utr_registry').upsert({
+            id: `utr-${newExpense.id}`,
+            user_id: this.currentUserId,
+            utr_number: newExpense.utrNumber.trim(),
+            source_module: 'Expenses',
+            record_id: newExpense.id,
+            amount: newExpense.amount,
+            transaction_date: newExpense.date,
+            description: `Expense - ${newExpense.category}`,
+            created_at: newExpense.createdAt
+          });
+        }
+      }
+    }
+
+    const expenses = this.getExpenses();
     expenses.unshift(newExpense);
     localStorage.setItem(this.getKey('expenses'), JSON.stringify(expenses));
 
@@ -1427,10 +1883,10 @@ class StorageService {
     return { success: true, expense: newExpense };
   }
 
-  public updateExpense(
+  public async updateExpense(
     id: string,
     data: Partial<Omit<Expense, 'id' | 'createdAt'>>
-  ): { success: boolean; error?: string; expense?: Expense } {
+  ): Promise<{ success: boolean; error?: string; expense?: Expense }> {
     const expenses = this.getExpenses();
     const index = expenses.findIndex(e => e.id === id);
     if (index === -1) return { success: false, error: 'Expense not found.' };
@@ -1453,6 +1909,44 @@ class StorageService {
       ...expenses[index],
       ...data
     };
+
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('expenses')
+          .update({
+            amount: updated.amount,
+            category: updated.category,
+            expense_date: updated.date,
+            payment_method: updated.paymentMethod,
+            utr_number: updated.utrNumber || null,
+            notes: updated.notes || null
+          })
+          .eq('id', id)
+          .eq('user_id', this.currentUserId);
+
+        if (error) {
+          logSupabaseError('updateExpense', error);
+          return { success: false, error: error.message };
+        }
+
+        if (updated.utrNumber && !this.isCashOrNoUtr(updated.utrNumber)) {
+          await supabase.from('global_utr_registry').upsert({
+            id: `utr-${updated.id}`,
+            user_id: this.currentUserId,
+            utr_number: updated.utrNumber.trim(),
+            source_module: 'Expenses',
+            record_id: updated.id,
+            amount: updated.amount,
+            transaction_date: updated.date,
+            description: `Expense - ${updated.category}`,
+            created_at: updated.createdAt
+          });
+        }
+      }
+    }
+
     expenses[index] = updated;
     localStorage.setItem(this.getKey('expenses'), JSON.stringify(expenses));
 
@@ -1461,11 +1955,34 @@ class StorageService {
     return { success: true, expense: updated };
   }
 
-  public deleteExpense(id: string): void {
+  public async deleteExpense(id: string): Promise<{ success: boolean; error?: string }> {
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('expenses')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', this.currentUserId);
+
+        if (error) {
+          logSupabaseError('deleteExpense', error);
+          return { success: false, error: error.message };
+        }
+
+        await supabase
+          .from('global_utr_registry')
+          .delete()
+          .eq('record_id', id)
+          .eq('user_id', this.currentUserId);
+      }
+    }
+
     const expenses = this.getExpenses().filter(e => e.id !== id);
     localStorage.setItem(this.getKey('expenses'), JSON.stringify(expenses));
     this.rebuildGlobalUtrRegistry();
     this.notify();
+    return { success: true };
   }
 
   // Expense Calculations (completely independent)
@@ -1542,9 +2059,9 @@ class StorageService {
     }
   }
 
-  public addLongTermLoan(
+  public async addLongTermLoan(
     data: Omit<LongTermLoan, 'id' | 'status' | 'closedDate' | 'createdAt' | 'updatedAt' | 'repayments'>
-  ): { success: boolean; error?: string; loan?: LongTermLoan } {
+  ): Promise<{ success: boolean; error?: string; loan?: LongTermLoan }> {
     if (!data.originalAmount || data.originalAmount <= 0) {
       return { success: false, error: 'Original loan amount must be greater than zero.' };
     }
@@ -1566,7 +2083,6 @@ class StorageService {
       }
     }
 
-    const loans = this.getLongTermLoans();
     const newLoan: LongTermLoan = {
       ...data,
       id: `loan-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -1577,6 +2093,50 @@ class StorageService {
       updatedAt: new Date().toISOString()
     };
 
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('long_term_loans')
+          .insert({
+            id: newLoan.id,
+            user_id: this.currentUserId,
+            person_name: newLoan.personName,
+            loan_type: newLoan.loanType,
+            original_amount: newLoan.originalAmount,
+            start_date: newLoan.startDate,
+            expected_return_date: newLoan.expectedReturnDate,
+            payment_method: newLoan.paymentMethod,
+            utr_number: newLoan.utrNumber || null,
+            notes: newLoan.notes || null,
+            status: newLoan.status,
+            closed_date: newLoan.closedDate || null,
+            created_at: newLoan.createdAt,
+            updated_at: newLoan.updatedAt
+          });
+
+        if (error) {
+          logSupabaseError('addLongTermLoan', error);
+          return { success: false, error: error.message };
+        }
+
+        if (newLoan.utrNumber && !this.isCashOrNoUtr(newLoan.utrNumber)) {
+          await supabase.from('global_utr_registry').upsert({
+            id: `utr-${newLoan.id}`,
+            user_id: this.currentUserId,
+            utr_number: newLoan.utrNumber.trim(),
+            source_module: 'Long-Term Loans',
+            record_id: newLoan.id,
+            amount: newLoan.originalAmount,
+            transaction_date: newLoan.startDate,
+            description: `${newLoan.loanType} - ${newLoan.personName}`,
+            created_at: newLoan.createdAt
+          });
+        }
+      }
+    }
+
+    const loans = this.getLongTermLoans();
     loans.unshift(newLoan);
     localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
 
@@ -1585,10 +2145,10 @@ class StorageService {
     return { success: true, loan: newLoan };
   }
 
-  public updateLongTermLoan(
+  public async updateLongTermLoan(
     id: string,
     data: Partial<Omit<LongTermLoan, 'id' | 'createdAt' | 'repayments'>>
-  ): { success: boolean; error?: string; loan?: LongTermLoan } {
+  ): Promise<{ success: boolean; error?: string; loan?: LongTermLoan }> {
     const loans = this.getLongTermLoans();
     const index = loans.findIndex(l => l.id === id);
     if (index === -1) return { success: false, error: 'Loan not found.' };
@@ -1637,6 +2197,48 @@ class StorageService {
       updated.closedDate = undefined;
     }
 
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error } = await supabase
+          .from('long_term_loans')
+          .update({
+            person_name: updated.personName,
+            loan_type: updated.loanType,
+            original_amount: updated.originalAmount,
+            start_date: updated.startDate,
+            expected_return_date: updated.expectedReturnDate,
+            payment_method: updated.paymentMethod,
+            utr_number: updated.utrNumber || null,
+            notes: updated.notes || null,
+            status: updated.status,
+            closed_date: updated.closedDate || null,
+            updated_at: updated.updatedAt
+          })
+          .eq('id', id)
+          .eq('user_id', this.currentUserId);
+
+        if (error) {
+          logSupabaseError('updateLongTermLoan', error);
+          return { success: false, error: error.message };
+        }
+
+        if (updated.utrNumber && !this.isCashOrNoUtr(updated.utrNumber)) {
+          await supabase.from('global_utr_registry').upsert({
+            id: `utr-${updated.id}`,
+            user_id: this.currentUserId,
+            utr_number: updated.utrNumber.trim(),
+            source_module: 'Long-Term Loans',
+            record_id: updated.id,
+            amount: updated.originalAmount,
+            transaction_date: updated.startDate,
+            description: `${updated.loanType} - ${updated.personName}`,
+            created_at: updated.createdAt
+          });
+        }
+      }
+    }
+
     loans[index] = updated;
     localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
 
@@ -1645,18 +2247,52 @@ class StorageService {
     return { success: true, loan: updated };
   }
 
-  public deleteLongTermLoan(id: string): void {
+  public async deleteLongTermLoan(id: string): Promise<{ success: boolean; error?: string }> {
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        // Delete child repayments first
+        const { error: repErr } = await supabase
+          .from('loan_repayments')
+          .delete()
+          .eq('loan_id', id)
+          .eq('user_id', this.currentUserId);
+        if (repErr) {
+          logSupabaseError('deleteLongTermLoan - delete repayments', repErr);
+          return { success: false, error: repErr.message };
+        }
+
+        const { error } = await supabase
+          .from('long_term_loans')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', this.currentUserId);
+
+        if (error) {
+          logSupabaseError('deleteLongTermLoan', error);
+          return { success: false, error: error.message };
+        }
+
+        await supabase
+          .from('global_utr_registry')
+          .delete()
+          .eq('record_id', id)
+          .eq('user_id', this.currentUserId);
+      }
+    }
+
     const loans = this.getLongTermLoans().filter(l => l.id !== id);
     localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
     this.rebuildGlobalUtrRegistry();
     this.notify();
+    return { success: true };
   }
 
   // Add a partial repayment to a loan
-  public addLoanRepayment(
+  public async addLoanRepayment(
     loanId: string,
     data: Omit<LoanRepayment, 'id' | 'loanId' | 'createdAt'>
-  ): { success: boolean; error?: string; loan?: LongTermLoan } {
+  ): Promise<{ success: boolean; error?: string; loan?: LongTermLoan }> {
     if (!data.amount || data.amount <= 0) {
       return { success: false, error: 'Repayment amount must be greater than zero.' };
     }
@@ -1720,6 +2356,59 @@ class StorageService {
       updatedAt: new Date().toISOString()
     };
 
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error: repErr } = await supabase
+          .from('loan_repayments')
+          .insert({
+            id: newRepayment.id,
+            user_id: this.currentUserId,
+            loan_id: loanId,
+            amount: newRepayment.amount,
+            repayment_date: newRepayment.date,
+            payment_method: newRepayment.paymentMethod,
+            utr_number: newRepayment.utrNumber || null,
+            notes: newRepayment.notes || null,
+            created_at: newRepayment.createdAt
+          });
+
+        if (repErr) {
+          logSupabaseError('addLoanRepayment', repErr);
+          return { success: false, error: repErr.message };
+        }
+
+        // Update loan status in Supabase
+        const { error: loanErr } = await supabase
+          .from('long_term_loans')
+          .update({
+            status: updatedLoan.status,
+            closed_date: updatedLoan.closedDate || null,
+            updated_at: updatedLoan.updatedAt
+          })
+          .eq('id', loanId)
+          .eq('user_id', this.currentUserId);
+
+        if (loanErr) {
+          logSupabaseError('addLoanRepayment - update loan', loanErr);
+        }
+
+        if (newRepayment.utrNumber && !this.isCashOrNoUtr(newRepayment.utrNumber)) {
+          await supabase.from('global_utr_registry').upsert({
+            id: `utr-${newRepayment.id}`,
+            user_id: this.currentUserId,
+            utr_number: newRepayment.utrNumber.trim(),
+            source_module: 'Long-Term Loans Repayment',
+            record_id: newRepayment.id,
+            amount: newRepayment.amount,
+            transaction_date: newRepayment.date,
+            description: `Repayment for ${loan.personName}`,
+            created_at: newRepayment.createdAt
+          });
+        }
+      }
+    }
+
     loans[index] = updatedLoan;
     localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
 
@@ -1729,10 +2418,10 @@ class StorageService {
   }
 
   // Delete a repayment
-  public deleteLoanRepayment(loanId: string, repaymentId: string): void {
+  public async deleteLoanRepayment(loanId: string, repaymentId: string): Promise<{ success: boolean; error?: string }> {
     const loans = this.getLongTermLoans();
     const index = loans.findIndex(l => l.id === loanId);
-    if (index === -1) return;
+    if (index === -1) return { success: false, error: 'Loan not found' };
 
     const loan = loans[index];
     const updatedRepayments = (loan.repayments || []).filter(r => r.id !== repaymentId);
@@ -1754,7 +2443,7 @@ class StorageService {
       }
     }
 
-    loans[index] = {
+    const updatedLoan: LongTermLoan = {
       ...loan,
       repayments: updatedRepayments,
       status: newStatus,
@@ -1762,9 +2451,47 @@ class StorageService {
       updatedAt: new Date().toISOString()
     };
 
+    if (this.isSupabaseUser(this.currentUserId)) {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { error: repErr } = await supabase
+          .from('loan_repayments')
+          .delete()
+          .eq('id', repaymentId)
+          .eq('user_id', this.currentUserId);
+
+        if (repErr) {
+          logSupabaseError('deleteLoanRepayment', repErr);
+          return { success: false, error: repErr.message };
+        }
+
+        const { error: loanErr } = await supabase
+          .from('long_term_loans')
+          .update({
+            status: updatedLoan.status,
+            closed_date: updatedLoan.closedDate || null,
+            updated_at: updatedLoan.updatedAt
+          })
+          .eq('id', loanId)
+          .eq('user_id', this.currentUserId);
+
+        if (loanErr) {
+          logSupabaseError('deleteLoanRepayment - update loan', loanErr);
+        }
+
+        await supabase
+          .from('global_utr_registry')
+          .delete()
+          .eq('record_id', repaymentId)
+          .eq('user_id', this.currentUserId);
+      }
+    }
+
+    loans[index] = updatedLoan;
     localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
     this.rebuildGlobalUtrRegistry();
     this.notify();
+    return { success: true };
   }
 
   // Long-Term Loans calculation (completely independent)
