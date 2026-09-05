@@ -1,6 +1,6 @@
 {
-  "name": "Shubham Money Manager",
-  "description": "Premium personal money management system for Shubham Godage featuring Khata ledger, personal expenses, long-term loans, transaction PIN security, and global UTR duplicate protection.",
+  "name": "Shubham Banking NexMoney",
+  "description": "Personal Finance Management: Secure multi-user vaults for Khata, Personal Expenses, and Long-Term Loans with per-user UTR validation.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

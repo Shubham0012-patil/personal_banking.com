@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { KhataPerson, KhataTransaction, Expense, LongTermLoan } from '../types';
+import { storage } from './storage';
 
 export function formatINR(val: number): string {
   return 'Rs. ' + Math.round(val).toLocaleString('en-IN');
@@ -24,6 +25,8 @@ export function generateKhataPdf(options: {
     month: 'long',
     day: 'numeric'
   });
+
+  const userName = storage.getCurrentUserName() || 'User';
 
   const targetPerson = options.personId
     ? options.people.find(p => p.id === options.personId)
@@ -65,21 +68,25 @@ export function generateKhataPdf(options: {
   doc.rect(0, 0, 210, 36, 'F');
 
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
+  doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text('SHUBHAM MONEY MANAGER', 14, 14);
+  doc.text('SHUBHAM BANKING NEXMONEY', 14, 13);
 
-  doc.setFontSize(10);
+  doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
+  doc.setTextColor(52, 211, 153); // emerald-400
+  doc.text('Personal Finance Management', 14, 18);
+
+  doc.setFontSize(9.5);
   doc.setTextColor(148, 163, 184); // slate-400
   doc.text(
     targetPerson
-      ? `PERSON LEDGER REPORT — ${targetPerson.name.toUpperCase()}`
+      ? `PERSON LEDGER STATEMENT — ${targetPerson.name.toUpperCase()}`
       : 'KHATA / SHORT-TERM TRANSACTIONS REPORT',
     14,
-    22
+    25
   );
-  doc.text(`User: Shubham Godage | Date: ${todayStr}`, 14, 28);
+  doc.text(`Account Holder: ${userName} | Date: ${todayStr}`, 14, 31);
 
   // Summary Box
   doc.setFillColor(248, 250, 252);
@@ -145,7 +152,7 @@ export function generateKhataPdf(options: {
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Confidential Financial Document — Shubham Godage | Page ${i} of ${pageCount}`,
+      `Confidential Financial Statement — ${userName} | SHUBHAM BANKING NEXMONEY | Page ${i} of ${pageCount}`,
       14,
       288
     );
@@ -175,6 +182,8 @@ export function generateExpensesPdf(options: {
     day: 'numeric'
   });
 
+  const userName = storage.getCurrentUserName() || 'User';
+
   let list = options.expenses;
   if (options.categoryFilter && options.categoryFilter !== 'All') {
     list = list.filter(e => e.category === options.categoryFilter);
@@ -193,15 +202,19 @@ export function generateExpensesPdf(options: {
   doc.rect(0, 0, 210, 36, 'F');
 
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
+  doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text('SHUBHAM MONEY MANAGER', 14, 14);
+  doc.text('SHUBHAM BANKING NEXMONEY', 14, 13);
 
-  doc.setFontSize(10);
+  doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
+  doc.setTextColor(52, 211, 153); // emerald-400
+  doc.text('Personal Finance Management', 14, 18);
+
+  doc.setFontSize(9.5);
   doc.setTextColor(148, 163, 184);
-  doc.text('PERSONAL EXPENSES FINANCIAL REPORT', 14, 22);
-  doc.text(`User: Shubham Godage | Date: ${todayStr}`, 14, 28);
+  doc.text('PERSONAL EXPENSES FINANCIAL REPORT', 14, 25);
+  doc.text(`Account Holder: ${userName} | Date: ${todayStr}`, 14, 31);
 
   // Summary Box
   doc.setFillColor(248, 250, 252);
@@ -262,7 +275,7 @@ export function generateExpensesPdf(options: {
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Confidential Financial Document — Shubham Godage | Page ${i} of ${pageCount}`,
+      `Confidential Financial Statement — ${userName} | SHUBHAM BANKING NEXMONEY | Page ${i} of ${pageCount}`,
       14,
       288
     );
@@ -287,6 +300,8 @@ export function generateLoansPdf(options: {
     day: 'numeric'
   });
 
+  const userName = storage.getCurrentUserName() || 'User';
+
   let list = options.loans;
   if (options.statusFilter && options.statusFilter !== 'All') {
     list = list.filter(l => l.status === options.statusFilter);
@@ -307,15 +322,19 @@ export function generateLoansPdf(options: {
   doc.rect(0, 0, 210, 36, 'F');
 
   doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
+  doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
-  doc.text('SHUBHAM MONEY MANAGER', 14, 14);
+  doc.text('SHUBHAM BANKING NEXMONEY', 14, 13);
 
-  doc.setFontSize(10);
+  doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
+  doc.setTextColor(52, 211, 153); // emerald-400
+  doc.text('Personal Finance Management', 14, 18);
+
+  doc.setFontSize(9.5);
   doc.setTextColor(148, 163, 184);
-  doc.text('LONG-TERM LOANS & REPAYMENTS AUDIT REPORT', 14, 22);
-  doc.text(`User: Shubham Godage | Date: ${todayStr}`, 14, 28);
+  doc.text('LONG-TERM LOANS & REPAYMENTS AUDIT REPORT', 14, 25);
+  doc.text(`Account Holder: ${userName} | Date: ${todayStr}`, 14, 31);
 
   // Summary Box
   doc.setFillColor(248, 250, 252);
@@ -385,7 +404,7 @@ export function generateLoansPdf(options: {
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Confidential Financial Document — Shubham Godage | Page ${i} of ${pageCount}`,
+      `Confidential Financial Statement — ${userName} | SHUBHAM BANKING NEXMONEY | Page ${i} of ${pageCount}`,
       14,
       288
     );

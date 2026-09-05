@@ -46,7 +46,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span>Private Fintech Workspace</span>
           </div>
           <h2 className="text-xl sm:text-2xl font-black text-slate-100 tracking-tight">
-            Welcome, Shubham Godage
+            Welcome, {storage.getCurrentUserName() || 'User'}
           </h2>
           <p className="text-xs sm:text-sm text-slate-400 mt-1.5 leading-relaxed">
             Your personal financial suite maintains three strictly separated ledgers with zero cross-calculation, guaranteed global UTR duplicate protection, and transaction PIN security.

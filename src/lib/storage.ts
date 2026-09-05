@@ -9,9 +9,9 @@ import {
   ExpenseCategory,
   KhataTransactionType
 } from '../types';
-import { getSupabase } from './supabase';
+import { getSupabase, hasAppPinRpc, setAppPinRpc, verifyAppPinRpc } from './supabase';
 
-const STORAGE_KEYS = {
+const LEGACY_STORAGE_KEYS = {
   USER_PROFILE: 'smm_user_profile',
   KHATA_PEOPLE: 'smm_khata_people',
   KHATA_TRANSACTIONS: 'smm_khata_transactions',
@@ -29,18 +29,20 @@ export async function hashPin(pin: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Initial default seed data based on user specification
+// Initial profile - NO default PIN is configured
 const DEFAULT_PROFILE: UserProfile = {
+  id: 'shubham_godage_primary',
   name: 'Shubham Godage',
   email: 'forexwithshubham0012@gmail.com',
-  pinHash: '', // Initialized in initStorage
+  pinHash: '',
   pinLength: 4,
-  isPinSet: true
+  isPinSet: false
 };
 
 const DEFAULT_KHATA_PEOPLE: KhataPerson[] = [
   {
     id: 'person-sakshi-001',
+    userId: 'shubham_godage_primary',
     name: 'Sakshi',
     phone: '+91 98234 56780',
     notes: 'Colleague & personal friend',
@@ -49,6 +51,7 @@ const DEFAULT_KHATA_PEOPLE: KhataPerson[] = [
   },
   {
     id: 'person-rahul-002',
+    userId: 'shubham_godage_primary',
     name: 'Rahul Sharma',
     phone: '+91 98765 43210',
     notes: 'Short term project expenses',
@@ -57,6 +60,7 @@ const DEFAULT_KHATA_PEOPLE: KhataPerson[] = [
   },
   {
     id: 'person-amit-003',
+    userId: 'shubham_godage_primary',
     name: 'Amit Patil',
     phone: '+91 97654 32109',
     notes: 'Local merchant & friend',
@@ -68,6 +72,7 @@ const DEFAULT_KHATA_PEOPLE: KhataPerson[] = [
 const DEFAULT_KHATA_TRANSACTIONS: KhataTransaction[] = [
   {
     id: 'kht-001',
+    userId: 'shubham_godage_primary',
     personId: 'person-sakshi-001',
     personName: 'Sakshi',
     type: 'Money Given',
@@ -235,38 +240,182 @@ const DEFAULT_LONG_TERM_LOANS: LongTermLoan[] = [
 class StorageService {
   private listeners: Set<() => void> = new Set();
   private initialized = false;
+  private currentUserId: string = 'shubham_godage_primary';
+  private currentUserEmail: string = 'forexwithshubham0012@gmail.com';
+  private currentUserName: string = 'Shubham Godage';
 
   constructor() {
+    this.restoreUserSession();
     this.init();
+  }
+
+  private restoreUserSession() {
+    const savedUserId = localStorage.getItem('smm_current_user_id');
+    const savedMeta = localStorage.getItem('smm_current_user_meta');
+    if (savedUserId) {
+      this.currentUserId = savedUserId;
+    }
+    if (savedMeta) {
+      try {
+        const parsed = JSON.parse(savedMeta);
+        if (parsed.email) this.currentUserEmail = parsed.email;
+        if (parsed.name) this.currentUserName = parsed.name;
+      } catch {}
+    }
+  }
+
+  public getKey(base: string): string {
+    return `smm_user_${this.currentUserId}_${base}`;
+  }
+
+  public setCurrentUser(
+    userOrId: { id: string; email: string; name?: string } | string,
+    email?: string,
+    name?: string
+  ) {
+    let id: string;
+    let userEmail: string;
+    let userName: string;
+
+    if (typeof userOrId === 'string') {
+      id = userOrId;
+      userEmail = email || '';
+      userName = name || (userEmail ? userEmail.split('@')[0] : 'User');
+    } else {
+      id = userOrId.id;
+      userEmail = userOrId.email;
+      userName = userOrId.name || (userOrId.email ? userOrId.email.split('@')[0] : 'User');
+    }
+
+    this.currentUserId = id;
+    this.currentUserEmail = userEmail;
+    this.currentUserName = userName;
+
+    localStorage.setItem('smm_current_user_id', id);
+    localStorage.setItem(
+      'smm_current_user_meta',
+      JSON.stringify({
+        id,
+        email: userEmail,
+        name: userName
+      })
+    );
+
+    this.initUserStorage({ id, email: userEmail, name: userName });
+    this.notify();
+  }
+
+  public getCurrentUser() {
+    return {
+      id: this.currentUserId,
+      email: this.currentUserEmail,
+      name: this.currentUserName
+    };
+  }
+
+  public getCurrentUserName(): string {
+    return this.currentUserName || 'Shubham Godage';
+  }
+
+  public async updateUserProfile(data: { name?: string }): Promise<{ success: boolean; error?: string }> {
+    return this.updateProfile(data);
+  }
+
+  private initUserStorage(user: { id: string; email: string; name?: string }) {
+    const profileKey = this.getKey('user_profile');
+    const khataPeopleKey = this.getKey('khata_people');
+    const khataTxsKey = this.getKey('khata_transactions');
+    const expensesKey = this.getKey('expenses');
+    const loansKey = this.getKey('long_term_loans');
+
+    const existingProfile = localStorage.getItem(profileKey);
+    if (!existingProfile) {
+      const isShubham =
+        user.email.toLowerCase() === 'forexwithshubham0012@gmail.com' ||
+        user.id === 'shubham_godage_primary' ||
+        user.name?.toLowerCase().includes('shubham');
+      const hasLegacyData = Boolean(localStorage.getItem(LEGACY_STORAGE_KEYS.KHATA_PEOPLE));
+
+      if (isShubham && hasLegacyData) {
+        // Safe migration of existing Shubham data into new user vault
+        try {
+          const oldProfile = localStorage.getItem(LEGACY_STORAGE_KEYS.USER_PROFILE);
+          if (oldProfile) {
+            localStorage.setItem(profileKey, oldProfile);
+          } else {
+            localStorage.setItem(
+              profileKey,
+              JSON.stringify({
+                id: user.id,
+                name: user.name || 'Shubham Godage',
+                email: user.email,
+                pinHash: '',
+                pinLength: 4,
+                isPinSet: false
+              })
+            );
+          }
+
+          const oldPeople = localStorage.getItem(LEGACY_STORAGE_KEYS.KHATA_PEOPLE);
+          if (oldPeople) localStorage.setItem(khataPeopleKey, oldPeople);
+
+          const oldTxs = localStorage.getItem(LEGACY_STORAGE_KEYS.KHATA_TRANSACTIONS);
+          if (oldTxs) localStorage.setItem(khataTxsKey, oldTxs);
+
+          const oldExpenses = localStorage.getItem(LEGACY_STORAGE_KEYS.EXPENSES);
+          if (oldExpenses) localStorage.setItem(expensesKey, oldExpenses);
+
+          const oldLoans = localStorage.getItem(LEGACY_STORAGE_KEYS.LONG_TERM_LOANS);
+          if (oldLoans) localStorage.setItem(loansKey, oldLoans);
+        } catch (e) {
+          console.error('Data migration error:', e);
+        }
+      } else if (isShubham && !hasLegacyData) {
+        // Default initial data for Shubham Godage
+        const profile: UserProfile = {
+          id: user.id,
+          name: user.name || 'Shubham Godage',
+          email: user.email,
+          pinHash: '',
+          pinLength: 4,
+          isPinSet: false
+        };
+        localStorage.setItem(profileKey, JSON.stringify(profile));
+        localStorage.setItem(khataPeopleKey, JSON.stringify(DEFAULT_KHATA_PEOPLE));
+        localStorage.setItem(khataTxsKey, JSON.stringify(DEFAULT_KHATA_TRANSACTIONS));
+        localStorage.setItem(expensesKey, JSON.stringify(DEFAULT_EXPENSES));
+        localStorage.setItem(loansKey, JSON.stringify(DEFAULT_LONG_TERM_LOANS));
+      } else {
+        // ANY NEW FAMILY MEMBER (User B, User C, etc.)
+        // FRESH, EMPTY, COMPLETELY ISOLATED FINANCIAL VAULT
+        const profile: UserProfile = {
+          id: user.id,
+          name: user.name || user.email.split('@')[0],
+          email: user.email,
+          pinHash: '',
+          pinLength: 4,
+          isPinSet: false
+        };
+        localStorage.setItem(profileKey, JSON.stringify(profile));
+        localStorage.setItem(khataPeopleKey, JSON.stringify([]));
+        localStorage.setItem(khataTxsKey, JSON.stringify([]));
+        localStorage.setItem(expensesKey, JSON.stringify([]));
+        localStorage.setItem(loansKey, JSON.stringify([]));
+      }
+    }
+
+    this.rebuildGlobalUtrRegistry();
   }
 
   public async init() {
     if (this.initialized) return;
 
-    // Initialize user profile with default PIN "1234" if not present
-    const existingProfile = localStorage.getItem(STORAGE_KEYS.USER_PROFILE);
-    if (!existingProfile) {
-      const defaultPinHash = await hashPin('1234');
-      const profile: UserProfile = {
-        ...DEFAULT_PROFILE,
-        pinHash: defaultPinHash
-      };
-      localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(profile));
-    }
-
-    // Initialize default data if empty
-    if (!localStorage.getItem(STORAGE_KEYS.KHATA_PEOPLE)) {
-      localStorage.setItem(STORAGE_KEYS.KHATA_PEOPLE, JSON.stringify(DEFAULT_KHATA_PEOPLE));
-    }
-    if (!localStorage.getItem(STORAGE_KEYS.KHATA_TRANSACTIONS)) {
-      localStorage.setItem(STORAGE_KEYS.KHATA_TRANSACTIONS, JSON.stringify(DEFAULT_KHATA_TRANSACTIONS));
-    }
-    if (!localStorage.getItem(STORAGE_KEYS.EXPENSES)) {
-      localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(DEFAULT_EXPENSES));
-    }
-    if (!localStorage.getItem(STORAGE_KEYS.LONG_TERM_LOANS)) {
-      localStorage.setItem(STORAGE_KEYS.LONG_TERM_LOANS, JSON.stringify(DEFAULT_LONG_TERM_LOANS));
-    }
+    this.restoreUserSession();
+    this.initUserStorage({
+      id: this.currentUserId,
+      email: this.currentUserEmail,
+      name: this.currentUserName
+    });
 
     this.rebuildGlobalUtrRegistry();
     this.initialized = true;
@@ -290,21 +439,116 @@ class StorageService {
     });
   }
 
-  // PROFILE & PIN METHODS
+  // PROFILE & AUTH METHODS
   public getProfile(): UserProfile {
-    const raw = localStorage.getItem(STORAGE_KEYS.USER_PROFILE);
+    const raw = localStorage.getItem(this.getKey('user_profile'));
     if (raw) {
       try {
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        return {
+          ...parsed,
+          name: parsed.name || this.currentUserName,
+          email: parsed.email || this.currentUserEmail,
+          id: this.currentUserId
+        };
       } catch {
         // fallback
       }
     }
-    return DEFAULT_PROFILE;
+    return {
+      id: this.currentUserId,
+      name: this.currentUserName,
+      email: this.currentUserEmail,
+      pinHash: '',
+      pinLength: 4,
+      isPinSet: false
+    };
   }
 
   public getUserProfile(): UserProfile {
     return this.getProfile();
+  }
+
+  public async updateProfile(data: { name?: string }): Promise<{ success: boolean; error?: string }> {
+    if (data.name?.trim()) {
+      this.currentUserName = data.name.trim();
+      const current = this.getProfile();
+      const updated: UserProfile = {
+        ...current,
+        name: this.currentUserName
+      };
+      localStorage.setItem(this.getKey('user_profile'), JSON.stringify(updated));
+      localStorage.setItem(
+        'smm_current_user_meta',
+        JSON.stringify({
+          id: this.currentUserId,
+          email: this.currentUserEmail,
+          name: this.currentUserName
+        })
+      );
+
+      const supabase = getSupabase();
+      if (supabase) {
+        try {
+          await supabase.auth.updateUser({
+            data: { full_name: this.currentUserName }
+          });
+          await supabase.from('profiles').upsert({
+            id: this.currentUserId,
+            full_name: this.currentUserName,
+            email: this.currentUserEmail,
+            updated_at: new Date().toISOString()
+          });
+        } catch (err) {
+          console.warn('Supabase profile update warning:', err);
+        }
+      }
+
+      this.notify();
+      return { success: true };
+    }
+    return { success: true };
+  }
+
+  public async changePassword(newPassword: string): Promise<{ success: boolean; error?: string }> {
+    const supabase = getSupabase();
+    if (!supabase) {
+      return { success: false, error: 'Supabase client is not connected. Connect Supabase in Settings.' };
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: 'New password must be at least 6 characters.' };
+    }
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to update password' };
+    }
+  }
+
+  public async requestPasswordReset(email?: string): Promise<{ success: boolean; error?: string }> {
+    const supabase = getSupabase();
+    if (!supabase) {
+      return { success: false, error: 'Supabase client is not connected. Connect Supabase in Settings.' };
+    }
+    const targetEmail = (email || this.currentUserEmail).trim();
+    if (!targetEmail) {
+      return { success: false, error: 'A valid email is required.' };
+    }
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
+        redirectTo: window.location.origin
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to request password reset' };
+    }
   }
 
   public getAuthState(): { isAuthenticated: boolean; user: UserProfile } {
@@ -315,21 +559,35 @@ class StorageService {
     };
   }
 
-  public login(): void {
+  public login(user?: { id: string; email: string; name?: string }): void {
     localStorage.setItem('smm_auth_status', 'authenticated');
-    this.notify();
+    if (user) {
+      this.setCurrentUser(user);
+    } else {
+      this.notify();
+    }
   }
 
   public logout(): void {
     localStorage.removeItem('smm_auth_status');
+    localStorage.removeItem('smm_current_user_id');
+    localStorage.removeItem('smm_current_user_meta');
+    this.currentUserId = 'guest';
+    this.currentUserName = 'Guest';
+    this.currentUserEmail = '';
     this.notify();
+  }
+
+  // TRANSACTION PIN METHODS
+  public hasPin(): boolean {
+    const profile = this.getProfile();
+    return Boolean(profile.isPinSet && profile.pinHash);
   }
 
   public async verifyPin(enteredPin: string): Promise<boolean> {
     const profile = this.getProfile();
-    if (!profile.pinHash) {
-      // If no hash yet, check if entered is default '1234'
-      return enteredPin === '1234';
+    if (!profile.pinHash || !profile.isPinSet) {
+      return false; // Strictly reject if no PIN set - no default fallback
     }
     const enteredHash = await hashPin(enteredPin);
     return enteredHash === profile.pinHash;
@@ -337,7 +595,7 @@ class StorageService {
 
   public async setPin(newPin: string): Promise<boolean> {
     if (newPin.length !== 4 && newPin.length !== 6) {
-      throw new Error('PIN must be either 4 or 6 digits');
+      throw new Error('PIN must be either 4 or 6 numeric digits');
     }
     const newHash = await hashPin(newPin);
     const currentProfile = this.getProfile();
@@ -347,9 +605,47 @@ class StorageService {
       pinLength: newPin.length as 4 | 6,
       isPinSet: true
     };
-    localStorage.setItem(STORAGE_KEYS.USER_PROFILE, JSON.stringify(updated));
+    localStorage.setItem(this.getKey('user_profile'), JSON.stringify(updated));
     this.notify();
     return true;
+  }
+
+  /**
+   * Check if application transaction PIN exists via Supabase RPC, falling back to local
+   */
+  public async checkHasAppPin(): Promise<boolean> {
+    const rpcResult = await hasAppPinRpc();
+    if (rpcResult !== null) {
+      return rpcResult;
+    }
+    return this.hasPin();
+  }
+
+  /**
+   * Verify application transaction PIN via Supabase RPC, falling back to local
+   */
+  public async verifyAppPin(pin: string): Promise<boolean> {
+    const rpcResult = await verifyAppPinRpc(pin);
+    if (rpcResult !== null) {
+      return rpcResult;
+    }
+    return this.verifyPin(pin);
+  }
+
+  /**
+   * Set or update application transaction PIN via Supabase RPC, keeping local hash in sync
+   */
+  public async setAppPin(newPin: string): Promise<{ success: boolean; error?: string }> {
+    if (newPin.length !== 4 && newPin.length !== 6) {
+      return { success: false, error: 'PIN must be either 4 or 6 numeric digits' };
+    }
+    const rpcResult = await setAppPinRpc(newPin);
+    if (rpcResult !== null && !rpcResult.success) {
+      return rpcResult;
+    }
+    // Also update local secure hashed state for this user
+    await this.setPin(newPin);
+    return { success: true };
   }
 
   // GLOBAL UTR REGISTRY & DUPLICATE PROTECTION
@@ -443,12 +739,12 @@ class StorageService {
       }
     }
 
-    localStorage.setItem(STORAGE_KEYS.GLOBAL_UTR, JSON.stringify(records));
+    localStorage.setItem(this.getKey('global_utr'), JSON.stringify(records));
     return records;
   }
 
   public getGlobalUtrRecords(): GlobalUtrRecord[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.GLOBAL_UTR);
+    const raw = localStorage.getItem(this.getKey('global_utr'));
     if (!raw) return this.rebuildGlobalUtrRegistry();
     try {
       return JSON.parse(raw);
@@ -482,7 +778,7 @@ class StorageService {
   // SECTION 1: KHATA / SHORT-TERM TRANSACTIONS
   // ==========================================
   public getKhataPeople(): KhataPerson[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.KHATA_PEOPLE);
+    const raw = localStorage.getItem(this.getKey('khata_people'));
     if (!raw) return [];
     try {
       return JSON.parse(raw);
@@ -495,6 +791,7 @@ class StorageService {
     const people = this.getKhataPeople();
     const newPerson: KhataPerson = {
       id: `person-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      userId: this.currentUserId,
       name: data.name.trim(),
       phone: data.phone?.trim() || undefined,
       notes: data.notes?.trim() || undefined,
@@ -502,7 +799,7 @@ class StorageService {
       updatedAt: new Date().toISOString()
     };
     people.unshift(newPerson);
-    localStorage.setItem(STORAGE_KEYS.KHATA_PEOPLE, JSON.stringify(people));
+    localStorage.setItem(this.getKey('khata_people'), JSON.stringify(people));
     this.notify();
     return newPerson;
   }
@@ -521,13 +818,13 @@ class StorageService {
       updatedAt: new Date().toISOString()
     };
     people[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.KHATA_PEOPLE, JSON.stringify(people));
+    localStorage.setItem(this.getKey('khata_people'), JSON.stringify(people));
 
     // Update name on associated transactions if changed
     if (data.name && data.name !== people[index].name) {
       const txs = this.getKhataTransactions();
       const updatedTxs = txs.map(t => (t.personId === id ? { ...t, personName: data.name! } : t));
-      localStorage.setItem(STORAGE_KEYS.KHATA_TRANSACTIONS, JSON.stringify(updatedTxs));
+      localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(updatedTxs));
     }
 
     this.notify();
@@ -536,18 +833,18 @@ class StorageService {
 
   public deleteKhataPerson(id: string): void {
     const people = this.getKhataPeople().filter(p => p.id !== id);
-    localStorage.setItem(STORAGE_KEYS.KHATA_PEOPLE, JSON.stringify(people));
+    localStorage.setItem(this.getKey('khata_people'), JSON.stringify(people));
 
     // Remove transactions for this person as well
     const txs = this.getKhataTransactions().filter(t => t.personId !== id);
-    localStorage.setItem(STORAGE_KEYS.KHATA_TRANSACTIONS, JSON.stringify(txs));
+    localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(txs));
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
   }
 
   public getKhataTransactions(): KhataTransaction[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.KHATA_TRANSACTIONS);
+    const raw = localStorage.getItem(this.getKey('khata_transactions'));
     if (!raw) return [];
     try {
       return JSON.parse(raw);
@@ -585,10 +882,11 @@ class StorageService {
     const newTx: KhataTransaction = {
       ...data,
       id: `kht-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      userId: this.currentUserId,
       createdAt: new Date().toISOString()
     };
     txs.unshift(newTx);
-    localStorage.setItem(STORAGE_KEYS.KHATA_TRANSACTIONS, JSON.stringify(txs));
+    localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(txs));
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
@@ -623,7 +921,7 @@ class StorageService {
       ...data
     };
     txs[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.KHATA_TRANSACTIONS, JSON.stringify(txs));
+    localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(txs));
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
@@ -632,7 +930,7 @@ class StorageService {
 
   public deleteKhataTransaction(id: string): void {
     const txs = this.getKhataTransactions().filter(t => t.id !== id);
-    localStorage.setItem(STORAGE_KEYS.KHATA_TRANSACTIONS, JSON.stringify(txs));
+    localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(txs));
     this.rebuildGlobalUtrRegistry();
     this.notify();
   }
@@ -744,7 +1042,7 @@ class StorageService {
   // SECTION 2: PERSONAL EXPENSES
   // ==========================================
   public getExpenses(): Expense[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.EXPENSES);
+    const raw = localStorage.getItem(this.getKey('expenses'));
     if (!raw) return [];
     try {
       return JSON.parse(raw);
@@ -781,10 +1079,11 @@ class StorageService {
     const newExpense: Expense = {
       ...data,
       id: `exp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      userId: this.currentUserId,
       createdAt: new Date().toISOString()
     };
     expenses.unshift(newExpense);
-    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+    localStorage.setItem(this.getKey('expenses'), JSON.stringify(expenses));
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
@@ -818,7 +1117,7 @@ class StorageService {
       ...data
     };
     expenses[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+    localStorage.setItem(this.getKey('expenses'), JSON.stringify(expenses));
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
@@ -827,7 +1126,7 @@ class StorageService {
 
   public deleteExpense(id: string): void {
     const expenses = this.getExpenses().filter(e => e.id !== id);
-    localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(expenses));
+    localStorage.setItem(this.getKey('expenses'), JSON.stringify(expenses));
     this.rebuildGlobalUtrRegistry();
     this.notify();
   }
@@ -897,7 +1196,7 @@ class StorageService {
   // SECTION 3: LONG-TERM LOANS
   // ==========================================
   public getLongTermLoans(): LongTermLoan[] {
-    const raw = localStorage.getItem(STORAGE_KEYS.LONG_TERM_LOANS);
+    const raw = localStorage.getItem(this.getKey('long_term_loans'));
     if (!raw) return [];
     try {
       return JSON.parse(raw);
@@ -934,6 +1233,7 @@ class StorageService {
     const newLoan: LongTermLoan = {
       ...data,
       id: `loan-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      userId: this.currentUserId,
       status: 'Active',
       repayments: [],
       createdAt: new Date().toISOString(),
@@ -941,7 +1241,7 @@ class StorageService {
     };
 
     loans.unshift(newLoan);
-    localStorage.setItem(STORAGE_KEYS.LONG_TERM_LOANS, JSON.stringify(loans));
+    localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
@@ -1001,7 +1301,7 @@ class StorageService {
     }
 
     loans[index] = updated;
-    localStorage.setItem(STORAGE_KEYS.LONG_TERM_LOANS, JSON.stringify(loans));
+    localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
@@ -1010,7 +1310,7 @@ class StorageService {
 
   public deleteLongTermLoan(id: string): void {
     const loans = this.getLongTermLoans().filter(l => l.id !== id);
-    localStorage.setItem(STORAGE_KEYS.LONG_TERM_LOANS, JSON.stringify(loans));
+    localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
     this.rebuildGlobalUtrRegistry();
     this.notify();
   }
@@ -1056,6 +1356,7 @@ class StorageService {
     const newRepayment: LoanRepayment = {
       ...data,
       id: `rep-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      userId: this.currentUserId,
       loanId,
       createdAt: new Date().toISOString()
     };
@@ -1083,7 +1384,7 @@ class StorageService {
     };
 
     loans[index] = updatedLoan;
-    localStorage.setItem(STORAGE_KEYS.LONG_TERM_LOANS, JSON.stringify(loans));
+    localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
 
     this.rebuildGlobalUtrRegistry();
     this.notify();
@@ -1124,7 +1425,7 @@ class StorageService {
       updatedAt: new Date().toISOString()
     };
 
-    localStorage.setItem(STORAGE_KEYS.LONG_TERM_LOANS, JSON.stringify(loans));
+    localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(loans));
     this.rebuildGlobalUtrRegistry();
     this.notify();
   }
@@ -1212,16 +1513,16 @@ class StorageService {
     try {
       const data = JSON.parse(jsonStr);
       if (data.khataPeople) {
-        localStorage.setItem(STORAGE_KEYS.KHATA_PEOPLE, JSON.stringify(data.khataPeople));
+        localStorage.setItem(this.getKey('khata_people'), JSON.stringify(data.khataPeople));
       }
       if (data.khataTransactions) {
-        localStorage.setItem(STORAGE_KEYS.KHATA_TRANSACTIONS, JSON.stringify(data.khataTransactions));
+        localStorage.setItem(this.getKey('khata_transactions'), JSON.stringify(data.khataTransactions));
       }
       if (data.expenses) {
-        localStorage.setItem(STORAGE_KEYS.EXPENSES, JSON.stringify(data.expenses));
+        localStorage.setItem(this.getKey('expenses'), JSON.stringify(data.expenses));
       }
       if (data.longTermLoans) {
-        localStorage.setItem(STORAGE_KEYS.LONG_TERM_LOANS, JSON.stringify(data.longTermLoans));
+        localStorage.setItem(this.getKey('long_term_loans'), JSON.stringify(data.longTermLoans));
       }
       this.rebuildGlobalUtrRegistry();
       this.notify();
@@ -1237,10 +1538,10 @@ class StorageService {
   }
 
   public resetToDefaultDemoData(): void {
-    localStorage.removeItem(STORAGE_KEYS.KHATA_PEOPLE);
-    localStorage.removeItem(STORAGE_KEYS.KHATA_TRANSACTIONS);
-    localStorage.removeItem(STORAGE_KEYS.EXPENSES);
-    localStorage.removeItem(STORAGE_KEYS.LONG_TERM_LOANS);
+    localStorage.removeItem(this.getKey('khata_people'));
+    localStorage.removeItem(this.getKey('khata_transactions'));
+    localStorage.removeItem(this.getKey('expenses'));
+    localStorage.removeItem(this.getKey('long_term_loans'));
     this.initialized = false;
     this.init();
   }

@@ -13,11 +13,22 @@ import {
 import { ActiveTab } from '../types';
 
 interface SidebarProps {
-  currentTab: ActiveTab;
-  onNavigate: (tab: ActiveTab) => void;
+  currentTab?: ActiveTab;
+  activeTab?: ActiveTab;
+  onNavigate?: (tab: ActiveTab) => void;
+  onSelectTab?: (tab: ActiveTab) => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate }) => {
+export const Sidebar: React.FC<SidebarProps> = ({
+  currentTab,
+  activeTab,
+  onNavigate,
+  onSelectTab
+}) => {
+  const active = currentTab || activeTab || 'dashboard';
+  const handleNav = (tab: ActiveTab) => {
+    (onNavigate || onSelectTab)?.(tab);
+  };
   const navItems = [
     {
       id: 'dashboard' as ActiveTab,
@@ -64,17 +75,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate }) => {
         <div className="space-y-6">
           {/* Logo & Brand */}
           <div className="flex items-center gap-3 px-2 py-1">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-400 p-0.5 shadow-lg shadow-emerald-500/20">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 via-emerald-500 to-teal-400 p-0.5 shadow-lg shadow-amber-500/10">
               <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-                <Wallet className="w-5 h-5 text-emerald-400" />
+                <Landmark className="w-5 h-5 text-amber-400" />
               </div>
             </div>
             <div>
-              <h2 className="text-sm font-extrabold tracking-tight text-slate-100 uppercase">
-                Shubham Godage
+              <h2 className="text-xs font-black tracking-tight text-slate-100 uppercase leading-snug">
+                Shubham Banking
               </h2>
-              <p className="text-[10px] font-semibold text-emerald-400 tracking-wider">
-                MONEY MANAGER
+              <p className="text-[10px] font-black text-amber-400 tracking-wider">
+                NEXMONEY
+              </p>
+              <p className="text-[9px] font-medium text-slate-400 -mt-0.5">
+                Personal Finance Management
               </p>
             </div>
           </div>
@@ -83,11 +97,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate }) => {
           <nav className="space-y-1">
             {navItems.map(item => {
               const Icon = item.icon;
-              const isActive = currentTab === item.id;
+              const isActive = active === item.id;
               return (
                 <button
                   key={item.id}
-                  onClick={() => onNavigate(item.id)}
+                  onClick={() => handleNav(item.id)}
                   className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all group ${
                     isActive
                       ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 shadow-sm'
@@ -148,11 +162,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate }) => {
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-lg border-t border-slate-800 py-1 px-2 flex justify-around items-center">
         {navItems.map(item => {
           const Icon = item.icon;
-          const isActive = currentTab === item.id;
+          const isActive = active === item.id;
           return (
             <button
               key={item.id}
-              onClick={() => onNavigate(item.id)}
+              onClick={() => handleNav(item.id)}
               className={`flex flex-col items-center py-1.5 px-2 rounded-xl transition-all ${
                 isActive ? 'text-emerald-400' : 'text-slate-400 hover:text-slate-200'
               }`}

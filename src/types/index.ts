@@ -26,6 +26,7 @@ export const KHATA_TRANSACTION_TYPES: KhataTransactionType[] = [
 
 export interface KhataPerson {
   id: string;
+  userId?: string;
   name: string;
   phone?: string;
   notes?: string;
@@ -35,6 +36,7 @@ export interface KhataPerson {
 
 export interface KhataTransaction {
   id: string;
+  userId?: string;
   personId: string;
   personName: string;
   type: KhataTransactionType;
@@ -71,6 +73,7 @@ export const EXPENSE_CATEGORIES: ExpenseCategory[] = [
 
 export interface Expense {
   id: string;
+  userId?: string;
   amount: number;
   category: ExpenseCategory;
   date: string;
@@ -86,6 +89,7 @@ export type LoanStatus = 'Active' | 'Partially Paid' | 'Closed' | 'Overdue';
 
 export interface LoanRepayment {
   id: string;
+  userId?: string;
   loanId: string;
   amount: number;
   date: string;
@@ -97,6 +101,7 @@ export interface LoanRepayment {
 
 export interface LongTermLoan {
   id: string;
+  userId?: string;
   personName: string;
   loanType: LoanType;
   originalAmount: number;
@@ -113,6 +118,7 @@ export interface LongTermLoan {
 }
 
 export interface GlobalUtrRecord {
+  userId?: string;
   utrNumber: string;
   sourceModule: 'Khata' | 'Expense' | 'LongTermLoan' | 'LoanRepayment';
   referenceId: string;
@@ -123,6 +129,7 @@ export interface GlobalUtrRecord {
 }
 
 export interface UserProfile {
+  id?: string;
   name: string;
   email: string;
   pinHash: string; // SHA-256 or masked PIN

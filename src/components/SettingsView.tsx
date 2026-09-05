@@ -13,11 +13,14 @@ import {
   User,
   Mail,
   Lock,
-  FileCode
+  FileCode,
+  Copy,
+  Users,
+  KeyRound
 } from 'lucide-react';
 import { storage } from '../lib/storage';
 import { PinModal } from './PinModal';
-import { SUPABASE_CONFIG } from '../lib/supabase';
+import { SUPABASE_CONFIG, SUPABASE_SQL_SCHEMA } from '../lib/supabase';
 
 interface SettingsViewProps {
   onOpenPinSetup: () => void;
@@ -27,6 +30,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
   const profile = storage.getUserProfile();
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState(profile.name);
+  const [showSqlSchema, setShowSqlSchema] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
 
   // Pin modal for sensitive resets
   const [showPinModal, setShowPinModal] = useState(false);
@@ -42,13 +49,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
     setTimeout(() => setErrorMsg(''), 5000);
   };
 
+  const handleUpdateName = () => {
+    if (!nameInput.trim()) {
+      showError('Please enter a valid name');
+      return;
+    }
+    storage.updateUserProfile({ name: nameInput.trim() });
+    setIsEditingName(false);
+    showSuccess('✓ Account name updated successfully');
+  };
+
+  const handlePasswordReset = async () => {
+    try {
+      const res = await storage.requestPasswordReset(profile.email);
+      if (res.success) {
+        showSuccess('✓ Password reset link has been dispatched to your email');
+      } else {
+        showError(res.error || 'Failed to dispatch reset email');
+      }
+    } catch (err: any) {
+      showError(err?.message || 'Error triggering password reset');
+    }
+  };
+
   const handleExportJson = () => {
     const backup = storage.exportAllData();
     const blob = new Blob([backup], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `shubham_money_manager_backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `shubham_banking_nexmoney_backup_${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -77,11 +107,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
   const handleResetData = () => {
     setPendingAction(() => () => {
       storage.resetAllData();
-      showSuccess('✓ All application data has been wiped and reset');
+      showSuccess('✓ All ledger records in this private vault have been wiped and reset');
       setTimeout(() => window.location.reload(), 1000);
     });
     setShowPinModal(true);
   };
+
+  const copySql = () => {
+    navigator.clipboard.writeText(SUPABASE_SQL_SCHEMA);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 3000);
+  };
+
+  const initials = (profile.name || 'User')
+    .split(' ')
+    .map(w => w[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2) || 'U';
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -90,7 +133,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
           Security & Application Settings
         </h2>
         <p className="text-xs text-slate-400 mt-0.5">
-          Manage your personal profile, transaction confirmation PIN, and cloud storage safety.
+          Manage your personal vault profile, application transaction PIN, and multi-user cloud security.
         </p>
       </div>
 
@@ -112,8 +155,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
       <div className="p-5 sm:p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-base">
-              SG
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/25 text-amber-300 flex items-center justify-center font-bold text-base">
+              {initials}
             </div>
             <div>
               <h3 className="text-sm font-bold text-slate-100">{profile.name}</h3>
@@ -121,19 +164,86 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
             </div>
           </div>
           <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-            Verified Single User
+            Multi-User Isolated Vault
           </span>
         </div>
 
         <div className="pt-3 border-t border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
-            <span className="text-slate-400 block text-[10px]">Registered Name</span>
-            <span className="font-semibold text-slate-200 mt-0.5 block">{profile.name}</span>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-slate-400 text-[10px]">Registered Name</span>
+              <button
+                type="button"
+                onClick={() => setIsEditingName(!isEditingName)}
+                className="text-[10px] text-amber-400 hover:underline"
+              >
+                {isEditingName ? 'Cancel' : 'Edit'}
+              </button>
+            </div>
+            {isEditingName ? (
+              <div className="flex gap-2 mt-1">
+                <input
+                  type="text"
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-100 flex-1 focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={handleUpdateName}
+                  className="px-2.5 py-1 bg-amber-400 text-slate-950 font-bold rounded-lg text-xs"
+                >
+                  Save
+                </button>
+              </div>
+            ) : (
+              <span className="font-semibold text-slate-200 block">{profile.name}</span>
+            )}
           </div>
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
             <span className="text-slate-400 block text-[10px]">Primary Account Email</span>
-            <span className="font-semibold text-slate-200 mt-0.5 block">{profile.email}</span>
+            <span className="font-semibold text-slate-200 mt-0.5 block truncate">{profile.email}</span>
           </div>
+        </div>
+
+        <div className="pt-2 flex flex-wrap gap-2.5">
+          <button
+            type="button"
+            onClick={handlePasswordReset}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs transition-colors"
+          >
+            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+            <span>Reset Login Password via Email</span>
+          </button>
+        </div>
+      </div>
+
+      {/* MULTI-USER FAMILY SYSTEM CARD */}
+      <div className="p-5 sm:p-6 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+            <Users className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-slate-100">
+              Family Multi-User Architecture & Data Privacy
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Each family member maintains their own login credentials and separate private ledger vault.
+            </p>
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 text-xs text-slate-300 leading-relaxed space-y-1.5">
+          <p>
+            <strong>Strict Data Isolation:</strong> Every record (Khata transactions, personal expenses, and loans) is tagged with a distinct <code className="text-amber-400 font-mono">user_id</code>.
+          </p>
+          <p>
+            <strong>PostgreSQL Row Level Security:</strong> Database policies enforce <code className="text-emerald-400 font-mono">auth.uid() = user_id</code> so no user can query or modify another user's private financial entries.
+          </p>
+          <p>
+            <strong>UTR Uniqueness:</strong> Enforced per-user account via <code className="text-indigo-400 font-mono">UNIQUE(user_id, utr_number)</code>.
+          </p>
         </div>
       </div>
 
@@ -155,7 +265,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
           </div>
           <button
             onClick={onOpenPinSetup}
-            className="px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-emerald-400 hover:bg-emerald-300 rounded-xl transition-colors"
+            className="px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-xl transition-colors"
           >
             Change PIN
           </button>
@@ -182,9 +292,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
               </p>
             </div>
           </div>
-          <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
-            Cloud + Local Offline Fallback
-          </span>
+          <button
+            onClick={() => setShowSqlSchema(!showSqlSchema)}
+            className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 flex items-center gap-1.5"
+          >
+            <FileCode className="w-4 h-4" />
+            <span>{showSqlSchema ? 'Hide SQL' : 'View SQL Schema'}</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
@@ -197,10 +311,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
           <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80">
             <span className="text-slate-400 block text-[10px]">Row-Level Security (RLS)</span>
             <span className="font-semibold text-emerald-400 mt-0.5 block">
-              Enforced for Shubham Godage
+              Enforced Per-User (auth.uid() = user_id)
             </span>
           </div>
         </div>
+
+        {showSqlSchema && (
+          <div className="space-y-2 pt-2 animate-in fade-in">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-200">
+                PostgreSQL Schema with Multi-User RLS
+              </span>
+              <button
+                onClick={copySql}
+                className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>{copiedSql ? 'Copied to Clipboard!' : 'Copy SQL'}</span>
+              </button>
+            </div>
+            <pre className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 font-mono text-[10px] text-slate-300 max-h-60 overflow-y-auto whitespace-pre-wrap">
+              {SUPABASE_SQL_SCHEMA}
+            </pre>
+          </div>
+        )}
       </div>
 
       {/* BACKUP & RESTORE */}
@@ -214,7 +348,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
               Data Backup & Restore
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Export encrypted JSON backup or restore past financial records.
+              Export encrypted JSON backup or restore past financial records for this private vault.
             </p>
           </div>
         </div>
@@ -250,7 +384,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenPinSetup }) =>
               <span>Reset Application Ledger Data</span>
             </h4>
             <p className="text-xs text-rose-300/70 mt-0.5 max-w-lg">
-              Permanently wipe all Khata accounts, personal expenses, and long-term loans. Requires your Application PIN to confirm.
+              Permanently wipe all Khata accounts, personal expenses, and long-term loans in your private vault. Requires your Application PIN to confirm.
             </p>
           </div>
           <button

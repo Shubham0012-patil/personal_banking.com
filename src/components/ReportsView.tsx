@@ -54,7 +54,7 @@ export const ReportsView: React.FC = () => {
           Financial Reports & Professional PDF Generator
         </h2>
         <p className="text-xs text-slate-400 mt-0.5">
-          Generate audit-ready PDF statements with personalized letterhead for Shubham Godage.
+          Generate audit-ready PDF statements with personalized letterhead for {storage.getCurrentUserName() || 'User'}.
         </p>
       </div>
 
@@ -306,7 +306,7 @@ export const ReportsView: React.FC = () => {
           </div>
 
           <div className="text-[11px] text-slate-500">
-            Exported documents contain cryptographic timestamps and user signature headers for Shubham Godage.
+            Exported documents contain cryptographic timestamps and user signature headers for {storage.getCurrentUserName() || 'Account Holder'}.
           </div>
         </div>
       </div>

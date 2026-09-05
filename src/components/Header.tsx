@@ -18,35 +18,55 @@ import { getSupabase } from '../lib/supabase';
 import { ActiveTab } from '../types';
 
 interface HeaderProps {
-  currentTab: ActiveTab;
-  onNavigate: (tab: ActiveTab) => void;
-  onOpenPinSetup: () => void;
-  onOpenQuickAdd: (type: 'khata' | 'expense' | 'loan') => void;
-  onLockSession: () => void;
-  theme: 'dark' | 'light';
-  onToggleTheme: () => void;
-  searchQuery: string;
-  onSearchChange: (q: string) => void;
+  currentTab?: ActiveTab;
+  activeTab?: ActiveTab;
+  onNavigate?: (tab: ActiveTab) => void;
+  onSelectTab?: (tab: ActiveTab) => void;
+  onOpenPinSetup?: () => void;
+  onOpenQuickAdd?: (type: 'khata' | 'expense' | 'loan') => void;
+  onLockSession?: () => void;
+  onLogout?: () => void;
+  theme?: 'dark' | 'light';
+  onToggleTheme?: () => void;
+  searchQuery?: string;
+  onSearchChange?: (q: string) => void;
+  onSearch?: (q: string) => void;
+  isAuthenticated?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   currentTab,
+  activeTab,
   onNavigate,
+  onSelectTab,
   onOpenPinSetup,
   onOpenQuickAdd,
   onLockSession,
+  onLogout,
   theme,
   onToggleTheme,
-  searchQuery,
-  onSearchChange
+  searchQuery = '',
+  onSearchChange,
+  onSearch
 }) => {
+  const active = currentTab || activeTab || 'dashboard';
+  const handleNav = (tab: ActiveTab) => {
+    (onNavigate || onSelectTab)?.(tab);
+  };
+  const handleLock = () => {
+    (onLockSession || onLogout)?.();
+  };
+  const handleSearch = (q: string) => {
+    (onSearchChange || onSearch)?.(q);
+  };
+
   const profile = storage.getProfile();
   const supabase = getSupabase();
   const [showQuickMenu, setShowQuickMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   const getTabTitle = () => {
-    switch (currentTab) {
+    switch (active) {
       case 'dashboard':
         return 'Overview Dashboard';
       case 'khata':
@@ -96,7 +116,7 @@ export const Header: React.FC<HeaderProps> = ({
               type="text"
               placeholder="Search across records, UTR, people..."
               value={searchQuery}
-              onChange={e => onSearchChange(e.target.value)}
+              onChange={e => handleSearch(e.target.value)}
               className="w-full bg-slate-900/90 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500/50"
             />
           </div>
@@ -106,7 +126,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-2 sm:gap-2.5">
           {/* PIN Security Badge */}
           <button
-            onClick={onOpenPinSetup}
+            onClick={() => onOpenPinSetup?.()}
             title="Application PIN Protection Enabled - Click to configure"
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium bg-slate-900 border border-slate-800 hover:border-emerald-500/40 text-slate-300 hover:text-emerald-300 transition-all shadow-sm"
           >
@@ -116,7 +136,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Supabase Status Indicator */}
           <button
-            onClick={() => onNavigate('settings')}
+            onClick={() => handleNav('settings')}
             title={
               supabase
                 ? 'Supabase Cloud Connected'
@@ -198,14 +218,19 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setShowProfileMenu(!showProfileMenu)}
               className="flex items-center gap-2 p-1 sm:px-2.5 sm:py-1 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors"
             >
-              <div className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xs">
-                SG
+              <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold text-xs">
+                {(profile.name || 'User')
+                  .split(' ')
+                  .map(w => w[0])
+                  .join('')
+                  .toUpperCase()
+                  .slice(0, 2) || 'U'}
               </div>
               <div className="text-left hidden xl:block">
-                <p className="text-xs font-semibold text-slate-200 leading-none">
+                <p className="text-xs font-semibold text-slate-200 leading-none truncate max-w-[130px]">
                   {profile.name}
                 </p>
-                <p className="text-[10px] text-slate-400 leading-tight">Master User</p>
+                <p className="text-[10px] text-amber-400 leading-tight">Private Vault</p>
               </div>
             </button>
 
@@ -217,8 +242,13 @@ export const Header: React.FC<HeaderProps> = ({
                 />
                 <div className="absolute right-0 mt-2 w-64 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-3 z-50 text-slate-200 animate-in fade-in duration-150">
                   <div className="flex items-center gap-2.5 pb-3 border-b border-slate-800">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-sm">
-                      SG
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold text-sm">
+                      {(profile.name || 'User')
+                        .split(' ')
+                        .map(w => w[0])
+                        .join('')
+                        .toUpperCase()
+                        .slice(0, 2) || 'U'}
                     </div>
                     <div className="overflow-hidden">
                       <p className="text-xs font-bold text-slate-100 truncate">
@@ -234,7 +264,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <button
                       onClick={() => {
                         setShowProfileMenu(false);
-                        onOpenPinSetup();
+                        onOpenPinSetup?.();
                       }}
                       className="w-full text-left px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 rounded-lg flex items-center gap-2"
                     >
@@ -244,7 +274,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <button
                       onClick={() => {
                         setShowProfileMenu(false);
-                        onNavigate('settings');
+                        handleNav('settings');
                       }}
                       className="w-full text-left px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800 rounded-lg flex items-center gap-2"
                     >
@@ -257,7 +287,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <button
                       onClick={() => {
                         setShowProfileMenu(false);
-                        onLockSession();
+                        handleLock();
                       }}
                       className="w-full text-left px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-500/10 rounded-lg flex items-center gap-2"
                     >
